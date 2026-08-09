@@ -1,0 +1,12 @@
+node_modules/
+
+# Secrets — never commit
+.env
+credentials.json
+token.json
+
+# Local state: the DB is disposable, the pipeline rebuilds it
+data/
+
+*.log
+.DS_Store

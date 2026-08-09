@@ -1,0 +1,66 @@
+# jobagent
+
+Daily agent that ingests SWE/AI-ML internship postings, scores them against my resume,
+finds recruiter contacts, and drafts/sends personalised cold emails.
+
+**This file is auto-loaded into every session. Keep it under ~100 lines.**
+Everything else lives in `docs/` and is read on demand.
+
+## Stack
+
+- **Node 25** — runs `.ts` files natively, no build step in dev, no bundler
+- **`node:sqlite`** — built in, no native compile. DB at `data/jobagent.db`
+- **`@anthropic-ai/sdk`** — `claude-haiku-4-5` scores, `claude-opus-5` drafts
+- **Zod** — `src/store/schema.ts` is the single source of truth for every shape
+- **`@huggingface/transformers`** — bge-small embeddings, local, free
+- **`googleapis`** — Gmail read/draft/send
+- **`grammy`** — Telegram digest with approve/reject buttons
+
+## Commands
+
+```bash
+node src/main.ts                  # full daily pipeline
+node src/main.ts --stage=score    # run one stage in isolation
+node src/main.ts --dry-run        # everything except sending
+node --test                       # tests
+```
+
+## Invariants — violating these causes real-world damage
+
+1. **Never call `gmail.messages.send`.** Always `drafts.create` → store `gmail_draft_id`
+   → `drafts.send(id)`. One code path for auto and approved. See `docs/architecture.md`.
+2. **`outreach` has `UNIQUE(job_id)`.** Double-sending is structurally impossible. Keep it.
+3. **Pattern-guessed emails never auto-send.** Only `confidence='high'` contacts
+   (from the posting itself or a company team page) are eligible.
+4. **Every stage is idempotent.** Re-running the pipeline twice must be a no-op.
+   Rules per stage are in `docs/architecture.md`.
+5. **Respect the daily send cap and the ramp.** Hard-coded, not configurable at runtime.
+6. **State lives in SQLite, never in memory across stages.** A crash mid-run must be
+   recoverable by just running again.
+
+## Non-obvious facts
+
+- Prompt caching does **not** work on the scoring prompt: `claude-haiku-4-5` has a
+  4096-token minimum cacheable prefix and our prefix is ~1200. Not a bug.
+- Sends are jittered 3–15 min apart starting 09:00. Never fire them all at pipeline time.
+- LinkedIn/Naukri are ingested by parsing *my own Gmail job-alert emails*, never scraped.
+- Contacts are cached per **company**, not per job. Assume the cache is warm.
+
+## Docs
+
+| File | Read it when |
+|---|---|
+| `docs/architecture.md` | Touching the data model, state machine, or a stage contract |
+| `docs/phases.md` | Deciding what to build next; check status header first |
+| `docs/agenthandoff.md` | **Start of every session** — in-flight work and blockers |
+| `docs/decisions.md` | About to change a design choice; check it wasn't already settled |
+
+## House style
+
+- **Talk to Utkarsh in plain technical language.** Explain what we're doing and why,
+  not the terminology for it. Real numbers and concrete comparisons help; jargon doesn't.
+- Zod schema first, then the code that uses it. Never hand-write an interface that
+  duplicates a schema.
+- Each job source implements `JobSource` (`src/ingest/types.ts`). Adding a source =
+  one new file, zero changes elsewhere.
+- Docs point at code; they never restate it. If a fact lives in code, the doc links to it.

@@ -1,0 +1,22 @@
+{
+  "name": "jobagent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=25"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/main.ts",
+    "dry-run": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/main.ts --dry-run",
+    "test": "node --disable-warning=ExperimentalWarning --test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2"
+  }
+}
