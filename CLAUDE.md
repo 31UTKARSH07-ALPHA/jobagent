@@ -15,7 +15,8 @@ Everything else lives in `docs/` and is read on demand.
 - **Zod** — `src/store/schema.ts` is the single source of truth for every shape
 - **`@huggingface/transformers`** — bge-small embeddings, local, free
 - **`googleapis`** — Gmail read/draft/send
-- **`grammy`** — Telegram digest with approve/reject buttons
+- **Telegram** — plain `fetch` in `src/notify/telegram.ts`; sending is one POST. `grammy`
+  arrives with Phase 3, which needs a long poll for approve/reject taps
 
 ## Commands
 
@@ -27,6 +28,7 @@ node --test                       # tests
 
 node src/match/score.ts --job=12       # score one job, print it, write nothing
 node src/match/score.ts --distribution # the histogram the calibration gate reads
+node src/notify/telegram.ts --test     # prove the bot is wired up
 ```
 
 ## Invariants — violating these causes real-world damage

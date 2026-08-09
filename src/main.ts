@@ -19,6 +19,7 @@ import { nowIso, StageName, type RunError } from './store/schema.ts';
 import type { Stage, StageContext } from './stage.ts';
 import { runIngest } from './ingest/index.ts';
 import { runScore } from './match/score.ts';
+import { runDigest } from './notify/digest.ts';
 
 export type { Stage, StageContext };
 
@@ -31,7 +32,17 @@ const notYet = (phase: 1 | 2 | 3, what: string): Stage => ({
  * Execution order for the daily run. `track` is deliberately excluded: it runs on its
  * own 4-hourly schedule because replies and bounces arrive continuously.
  */
-export const DAILY_STAGES = ['ingest', 'prefilter', 'score', 'contacts', 'draft', 'send'] as const;
+export const DAILY_STAGES = [
+  'ingest',
+  'prefilter',
+  'score',
+  'contacts',
+  'draft',
+  // Before `send`, not after: the 06:05 digest is what you read before anything leaves at
+  // 09:00, and from Phase 2 it carries the drafts awaiting approval.
+  'digest',
+  'send',
+] as const;
 
 export const STAGES: Record<string, Stage> = {
   ingest: { phase: 1, run: runIngest },
@@ -39,6 +50,7 @@ export const STAGES: Record<string, Stage> = {
   score: { phase: 1, run: runScore },
   contacts: notYet(2, 'contact cascade + MX check'),
   draft: notYet(2, 'Groq drafting into Gmail drafts'),
+  digest: { phase: 1, run: runDigest },
   send: notYet(3, 'gate, daily cap, jittered 09:00 queue'),
   track: notYet(3, 'replies, bounces, follow-ups'),
 };

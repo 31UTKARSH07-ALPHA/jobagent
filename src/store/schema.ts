@@ -102,6 +102,7 @@ export const StageName = z.enum([
   "score",
   "contacts",
   "draft",
+  "digest",
   "send",
   "track",
 ]);
@@ -150,6 +151,8 @@ export const Job = z.object({
   first_seen_at: Timestamp,
   /** Bumped on every ingest that still sees the posting. Staleness → EXPIRED. */
   last_seen_at: Timestamp,
+  /** When this job was reported in a digest. null = not reported yet. */
+  digested_at: Timestamp.nullable(),
 });
 export type Job = z.infer<typeof Job>;
 
@@ -256,6 +259,7 @@ export const NewJob = Job.omit({
   last_contact_attempt_at: true,
   first_seen_at: true,
   last_seen_at: true,
+  digested_at: true,
 });
 export type NewJob = z.infer<typeof NewJob>;
 

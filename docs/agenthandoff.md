@@ -13,8 +13,9 @@ Do not restate architecture here. Point at `docs/architecture.md`.
 
 ## Now
 
-Phase 0 complete. Phase 1: ingest and scoring both work for real. 61 tests green,
-`tsc --noEmit` clean, working tree clean, all pushed.
+Phase 0 complete. Phase 1: ingest → score → **Telegram digest** works for real, and a real
+digest has landed on Utkarsh's phone. 72 tests green, `tsc --noEmit` clean, working tree
+clean, all pushed.
 
 | Works today | Command |
 |---|---|
@@ -24,13 +25,20 @@ Phase 0 complete. Phase 1: ingest and scoring both work for real. 61 tests green
 | **Scoring → MATCHED / REJECTED** | `node src/main.ts --stage=score` |
 | **One job, printed, nothing written** | `node src/match/score.ts --job=<id>` |
 | **The calibration histogram** | `node src/match/score.ts --distribution` |
+| **Send the morning digest** | `node src/main.ts --stage=digest` |
+| **Preview it without sending** | `node src/main.ts --stage=digest --dry-run` |
+| **Prove the bot works** | `node src/notify/telegram.ts --test` |
 | Any model call | `complete()` / `chat()` in `src/llm/groq.ts` |
 
 All 5 DISCOVERED rows are now scored under rubric v2: **100, 86, 76, 46, 30** → 3 MATCHED,
 2 REJECTED. Sane at both ends — Stripe's SWE intern is the 100; a Linux *kernel* role got
 stack 0 / domain 0 and a Cloudflare intern role that is onsite in Austin got location 0.
 
-Not built yet: the Telegram digest, contacts, drafting, sending. `src/main.ts` still logs
+Telegram is fully wired: bot `@utkarsh_jobagent_bot`, token and `TELEGRAM_CHAT_ID` both in
+`.env`. `credentials.json` for Gmail is in the project root (Desktop-app client, project
+`jobagent-505021`) but **no OAuth code exists yet and `token.json` has never been written**.
+
+Not built yet: contacts, drafting, sending, Gmail-alert ingest. `src/main.ts` still logs
 those stages as no-ops.
 
 **The number that still matters: 4,710 postings seen → 5 kept.** The ATS pollers alone will
@@ -40,9 +48,9 @@ never fill a daily digest. See the coverage note below.
 
 Nothing. Clean tree, no partial work.
 
-## Read decisions 012 and 013 before touching the scorer
+## Read decisions 012, 013 and 014 before touching the scorer or the digest
 
-They are the two things a fresh session would otherwise undo, both measured today:
+Three things a fresh session would otherwise undo, all measured on 2026-08-10:
 
 - **Never ask a model for a 0–100 score.** Asked directly, the same posting came back 55,
   78, 90 and 92 — and `REJECTED` is terminal, so a bad roll silently discards a good job.
@@ -53,6 +61,10 @@ They are the two things a fresh session would otherwise undo, both measured toda
   scoring calls a minute, ~30s per job. Hence `MAX_SCORES_PER_RUN = 60`, and hence the 429
   wait is parsed out of the error body. Do not raise `max_tokens` for "headroom" — it is
   charged whether it is used or not.
+- **The digest is silent when nothing matched, and that is deliberate** (014). It is also
+  HTML rather than MarkdownV2, because job titles are full of the fifteen characters
+  MarkdownV2 makes you escape. Do not "add a daily status ping" here — a dead cron is the
+  launchd layer's problem, and a usually-empty message is one you stop reading.
 
 ## Coverage problem worth understanding before building more
 
@@ -66,24 +78,27 @@ Full reasoning in `docs/decisions.md` 010.
 
 ## Blocked on Utkarsh
 
-1. **Google Cloud OAuth** — the top blocker. Needs his browser, ~10 min. Create project →
-   enable Gmail API → OAuth consent screen (External, testing, add his own email as a test
-   user) → create Desktop app credentials → download as `credentials.json` into the project
-   root. Scopes: `gmail.readonly`, `gmail.compose`, `gmail.send`.
-2. **Telegram bot token** — talk to `@BotFather`, `/newbot`, paste the token into `.env`.
+**Nothing.** Resume, Groq key, Telegram bot and `credentials.json` are all in place as of
+2026-08-10. The only thing he still has to do is click through one OAuth consent screen when
+the Gmail flow is written — and that cannot happen before the code exists.
 
-*(Resume and Groq key are both done. Target geography is settled — decision 009.)*
+*(Target geography is settled — decision 009.)*
 
 ## Next action
 
-**`src/notify/telegram.ts`.** Everything it needs now exists: 3 MATCHED jobs with a
-`fit_score`, a `reasoning` and a `hook` each, plus `factorLine()` for the one-line
-breakdown. Needs the bot token above; until then it can be built and tested against a
-fixture. That closes Phase 1 — a digest actually arriving each morning.
+**Gmail OAuth, then `src/ingest/gmail-alerts.ts`.** `credentials.json` is already in place,
+so the remaining work is code plus one browser approval: an installed-app OAuth flow writing
+`token.json`, then a `JobSource` that parses LinkedIn and Naukri alert emails. This is the
+real unlock — see the coverage note. Scopes: `gmail.readonly`, `gmail.compose`, `gmail.send`.
+
+Worth knowing before it bites: the consent screen is in **Testing** mode, so its refresh
+token expires after 7 days. Either publish the app or plan on re-approving weekly.
 
 Then, in order of value:
 
-- **Gmail OAuth + `src/ingest/gmail-alerts.ts`** — the real unlock. See the coverage note.
+- **A launchd plist for the 06:00 run** — the last thing between "works when run" and
+  "arrives each morning". Not yet written; Utkarsh has not been asked whether he wants a
+  background agent installed.
 - Let scoring run 3 days, then `--distribution` and set the thresholds for real
   (decision 008). With 5 scores the histogram means nothing yet.
 
@@ -115,6 +130,8 @@ written, not before.
 
 ## Open questions not yet settled
 
+- Does Utkarsh want a launchd agent installed on this laptop, or would he rather run the
+  pipeline by hand until it has proved itself? Not asked yet.
 - Daily send cap: architecture says ramp to 8/day; original ask was 10–20. Not resolved.
 - Follow-ups: one at day 4, or none in v1?
 - Suppression: second role at an already-emailed company — approval queue, or skip?

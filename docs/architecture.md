@@ -116,8 +116,9 @@ on four identical prompts — and `REJECTED` is terminal. Decision 012 has the m
 | 3 | Score | `jobs` @ DISCOVERED (prefilter is not built — see `phases.md`) | `job_scores`, state | daily |
 | 4 | Contacts | `jobs` @ MATCHED | `contacts`, state | daily |
 | 5 | Draft | job + score + contact | `outreach` @ DRAFTED | daily |
-| 6 | Gate + Send | `outreach` @ DRAFTED / approved | Gmail, state → SENT | daily + on-approval |
-| 7 | Track | `outreach` @ SENT | replies, bounces, follow-ups | **every 4h** |
+| 6 | Digest | `jobs` @ MATCHED with `digested_at IS NULL` | Telegram, `jobs.digested_at` | daily |
+| 7 | Gate + Send | `outreach` @ DRAFTED / approved | Gmail, state → SENT | daily + on-approval |
+| 8 | Track | `outreach` @ SENT | replies, bounces, follow-ups | **every 4h** |
 
 There is deliberately **no separate normalise stage**. Each source adapter implements
 `JobSource` (`src/ingest/types.ts`) and emits already-canonical rows:
@@ -132,8 +133,11 @@ interface JobSource {
 Greenhouse, Lever, Ashby, GmailAlerts, HackerNews all satisfy this. Adding a source is
 one new file plus one line in the registry.
 
-Stage 7 runs on its **own schedule**, not as part of the daily pipeline. Replies and
+Stage 8 runs on its **own schedule**, not as part of the daily pipeline. Replies and
 bounces arrive continuously; checking once a day wastes a day.
+
+The digest sits *before* send, not after: it is what you read at 06:05, while nothing leaves
+until 09:00. From Phase 2 it also carries the drafts awaiting approval.
 
 ## Idempotency
 
@@ -144,6 +148,7 @@ The pipeline must be safe to run twice in a row.
 | Ingest | Upsert on `dedup_key`; bump `last_seen_at` |
 | Score | Only picks up DISCOVERED rows; a `(job_id, prompt_version)` row already there is reused rather than re-requested |
 | Contacts | Skip if the company already has a contact |
+| Digest | Skip if `jobs.digested_at` is set; it is set only after Telegram accepts the message |
 | Draft | Skip if an `outreach` row exists for `job_id` |
 | Send | See below |
 

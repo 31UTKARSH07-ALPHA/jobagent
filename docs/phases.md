@@ -1,8 +1,8 @@
 # Phases
 
-> **Status: Phase 1 in progress. ATS ingest and scoring both work end to end — jobs are
-> being scored and sorted into MATCHED/REJECTED. The digest is not built yet, and neither
-> is Gmail-alert ingest, which is where Indian coverage has to come from.**
+> **Status: Phase 1 nearly done. Ingest → score → Telegram digest works end to end, and a
+> real digest has landed on Utkarsh's phone. Left: Gmail-alert ingest (where Indian coverage
+> has to come from) and a launchd schedule so it runs without being asked.**
 > Update this header every time a phase completes. It is the first thing read each session.
 
 Ship each phase end-to-end before starting the next. A working Phase 1 already removes
@@ -44,11 +44,17 @@ yet. This alone replaces the manual searching.
 - [x] `src/llm/` — Groq client + one interface per job (decision 011)
 - [x] `src/match/score.ts` — four factor ratings from the model, score computed in code
       (decision 012). `--distribution` prints the histogram the calibration gate needs.
-- [ ] `src/notify/telegram.ts` — morning digest
+- [x] `src/notify/telegram.ts` — send-only Telegram client (`--chat-id`, `--test`)
+- [x] `src/notify/digest.ts` — the morning digest stage. Reported once per job via
+      `jobs.digested_at`; silent when nothing new (decision 014)
 - [x] `src/main.ts` — stage runner + `--stage` / `--dry-run` flags *(done in Phase 0;
       stages just need real implementations plugged into `STAGES`)*
 
 **Done when:** a real Telegram digest arrives from a real cron run.
+
+A real digest has arrived — 3 matches, sent to Utkarsh's phone on 2026-08-10 — but from a
+hand-run `--stage=digest`, not from a schedule. What is left for Phase 1: Gmail-alert ingest
+(the coverage problem, decision 010) and a launchd plist for the 06:00 run.
 
 ### Calibration gate — do not skip
 

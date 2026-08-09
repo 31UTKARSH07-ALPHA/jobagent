@@ -262,3 +262,42 @@ throughput to avoid an error that is already handled correctly.
 
 **Revisit when.** Gmail-alert ingest lands and the daily queue jumps from 5 to dozens. If
 scoring starts dominating the run, trim the prompt before paying for a higher tier.
+
+---
+
+## 014 — Digest shape: silent when empty, HTML not Markdown, a column not a state
+
+**Decision.** Three choices in `src/notify/digest.ts` that look arbitrary and are not:
+
+1. **No message when there are no new matches.** Not even a "nothing today" line.
+2. **HTML `parse_mode`, not MarkdownV2.**
+3. **`jobs.digested_at` is a column, not a `NOTIFIED` job state.**
+
+**Why.** (1) A daily message that is usually empty trains you to stop opening it, and the
+one morning it matters you would swipe it away with the rest. It also breaks idempotency:
+two runs in one morning would send two heartbeats. Knowing the *cron* is dead is a different
+problem with a different owner — the launchd layer in Phase 3, which can shout when the
+pipeline exits non-zero. Silence here means "nothing matched", not "nothing ran".
+
+(2) MarkdownV2 requires escaping fifteen characters, including `.` `-` `(` `)` `!`. Job
+titles are made of those: "SDE-1 (Backend)", "Intern — Fall 2026". HTML mode needs three,
+`&` `<` `>`. One escaping miss is a 400 from Telegram at 06:05 and no digest at all, so the
+mode with a fifth of the escaping surface wins.
+
+(3) Being told about a job changes nothing about the job. It is not on the path from
+DISCOVERED to SENT, it does not gate anything, and adding it as a state would mean every
+downstream stage has to know that MATCHED and NOTIFIED mean the same thing. Also a job is
+legitimately reported *twice* over its life — once as a match, later as a draft awaiting
+approval — which a single state cannot express. Phase 2's draft digest gets its own marker
+on `outreach`.
+
+**Also.** Ten jobs per digest, remainder held over and reported the next day rather than
+dropped — a reading limit, not a rate limit. And `MAX_ITEMS_PER_DIGEST` cuts the *lowest*
+scores, since the digest is sorted best-first.
+
+**Rejected.** *`grammy`* — Phase 1 only sends, which is one POST. The library earns its
+place in Phase 3, which needs a long poll listening for approve/reject taps.
+
+**Revisit when.** Phase 2 puts drafts in the digest. If the message gets long enough to
+split routinely, that is the signal to shorten `reasoning` in the digest rather than raise
+the chunk limit.
