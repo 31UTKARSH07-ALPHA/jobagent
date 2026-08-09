@@ -18,6 +18,7 @@ import { stateCounts } from './store/state.ts';
 import { nowIso, StageName, type RunError } from './store/schema.ts';
 import type { Stage, StageContext } from './stage.ts';
 import { runIngest } from './ingest/index.ts';
+import { runScore } from './match/score.ts';
 
 export type { Stage, StageContext };
 
@@ -35,9 +36,9 @@ export const DAILY_STAGES = ['ingest', 'prefilter', 'score', 'contacts', 'draft'
 export const STAGES: Record<string, Stage> = {
   ingest: { phase: 1, run: runIngest },
   prefilter: notYet(1, 'bge-small embeddings + cosine top ~30'),
-  score: notYet(1, 'haiku scorer'),
+  score: { phase: 1, run: runScore },
   contacts: notYet(2, 'contact cascade + MX check'),
-  draft: notYet(2, 'opus drafting into Gmail drafts'),
+  draft: notYet(2, 'Groq drafting into Gmail drafts'),
   send: notYet(3, 'gate, daily cap, jittered 09:00 queue'),
   track: notYet(3, 'replies, bounces, follow-ups'),
 };

@@ -12,6 +12,11 @@
  *    produce schema-valid JSON on roughly one call in four, then succeeded three times
  *    in a row on the identical prompt. It is a dice roll, not a capability gap — so a
  *    schema failure is retried rather than propagated.
+ *
+ * **Reproducibility.** Groq's default temperature is 1.0. Measured on 2026-08-10: the same
+ * posting scored 55 and 92 on two runs of the identical scoring prompt — the difference
+ * between a terminal REJECTED and a MATCHED. Callers whose output is a judgement rather
+ * than prose pass `temperature: 0` (decision 012).
  */
 import { z } from 'zod';
 import type { LlmJob } from './models.ts';
@@ -24,6 +29,16 @@ const DEFAULT_RETRIES = 3;
 
 /** Minimum gap between calls to one model, so a batch of scorings does not trip the limiter. */
 const MIN_INTERVAL_MS = 700;
+
+/**
+ * What a retry uses after the model failed to produce valid JSON at temperature 0.
+ *
+ * An identical request at temperature 0 tends to reproduce the same broken output — the
+ * sampler is in the same place, so retrying is not a fresh roll of the dice. Measured on
+ * 2026-08-10: one posting failed JSON validation four attempts in a row, then succeeded on
+ * a later identical call. Just enough nudge to land somewhere else.
+ */
+const SCHEMA_RETRY_TEMPERATURE = 0.3;
 
 export type ChatMessage = {
   role: 'system' | 'user' | 'assistant';
@@ -67,18 +82,50 @@ function pace(model: string): Promise<void> {
   return next;
 }
 
+/**
+ * How long to wait after a 429.
+ *
+ * Groq does not always send a `retry-after` header, but its 429 body always names the wait:
+ * "Please try again in 18.945s". Without reading that, the exponential fallback (1s, 2s, 4s)
+ * is far shorter than a token-per-minute window, so all three retries burn inside the same
+ * window and the job is lost for the day. Measured on 2026-08-10: scoring is ~3,500 tokens
+ * a call against a free-tier limit of 8,000 TPM, so the third call in a minute always 429s.
+ */
+export function retryAfterMs(headerValue: string | null, message: string): number {
+  const header = Number(headerValue);
+  if (Number.isFinite(header) && header > 0) return Math.min(header * 1000, 60_000);
+
+  const fromBody = /try again in ([\d.]+)\s*(ms|s)\b/i.exec(message);
+  if (fromBody) {
+    const value = Number(fromBody[1]);
+    const ms = fromBody[2]?.toLowerCase() === 'ms' ? value : value * 1000;
+    // A second of headroom: the window boundary is theirs, not ours, and landing exactly on
+    // it just earns another 429.
+    if (Number.isFinite(ms) && ms > 0) return Math.min(ms + 1_000, 60_000);
+  }
+
+  return 0;
+}
+
+/** The model produced something, and it was not valid against the schema. */
+export const isGenerationFailure = (err: GroqError): boolean =>
+  err.failedGeneration !== undefined || /failed to (generate|validate) json/i.test(err.message);
+
 /** A schema failure is worth another roll of the dice; a bad request is not. */
 const isRetryable = (err: GroqError): boolean =>
-  err.status === 429 ||
-  err.status >= 500 ||
-  err.failedGeneration !== undefined ||
-  /failed to (generate|validate) json/i.test(err.message);
+  err.status === 429 || err.status >= 500 || isGenerationFailure(err);
 
 export type ChatOptions = {
   job: LlmJob;
   system?: string;
   messages: ChatMessage[];
   maxTokens?: number;
+  /**
+   * Groq defaults to 1.0. Rubric work wants 0 — see the note on reproducibility above.
+   * Omitted from the request when unset, so the provider default is not silently changed
+   * for jobs that want variety (drafting).
+   */
+  temperature?: number;
   /** JSON Schema for strict structured output. Set by `complete`; rarely passed directly. */
   responseSchema?: { name: string; schema: Record<string, unknown> };
   timeoutMs?: number;
@@ -106,6 +153,8 @@ export async function chat(opts: ChatOptions): Promise<string> {
     max_tokens: opts.maxTokens ?? 2048,
   };
 
+  if (opts.temperature !== undefined) body['temperature'] = opts.temperature;
+
   if (opts.responseSchema) {
     body['response_format'] = {
       type: 'json_schema',
@@ -115,10 +164,18 @@ export async function chat(opts: ChatOptions): Promise<string> {
 
   let lastError: unknown;
   let backoffMs = 0;
+  /** Whether the previous attempt failed on JSON rather than on transport or rate limit. */
+  let badGeneration = false;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0) await sleep(backoffMs || 1000 * 2 ** (attempt - 1));
     await pace(model.id);
+
+    // Only after a JSON failure: a 429 says nothing about the sampling, so a rate-limited
+    // call should be retried exactly as it was.
+    if (badGeneration && body['temperature'] === 0) {
+      body['temperature'] = SCHEMA_RETRY_TEMPERATURE;
+    }
 
     try {
       const res = await fetch(`${BASE_URL}/chat/completions`, {
@@ -134,15 +191,12 @@ export async function chat(opts: ChatOptions): Promise<string> {
       const payload = (await res.json()) as GroqResponse;
 
       if (!res.ok || payload.error) {
-        const retryAfter = Number(res.headers.get('retry-after'));
-        backoffMs = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 60_000) : 0;
+        const message = payload.error?.message ?? res.statusText;
+        backoffMs = retryAfterMs(res.headers.get('retry-after'), message);
 
-        const err = new GroqError(
-          res.status,
-          payload.error?.message ?? res.statusText,
-          payload.error?.failed_generation,
-        );
+        const err = new GroqError(res.status, message, payload.error?.failed_generation);
         if (!isRetryable(err)) throw err;
+        badGeneration = isGenerationFailure(err);
         lastError = err;
         continue;
       }

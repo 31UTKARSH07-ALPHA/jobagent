@@ -1,7 +1,8 @@
 # Phases
 
-> **Status: Phase 1 in progress. ATS ingest works end to end against 51 live boards;
-> matching, scoring and the digest are not built yet.**
+> **Status: Phase 1 in progress. ATS ingest and scoring both work end to end — jobs are
+> being scored and sorted into MATCHED/REJECTED. The digest is not built yet, and neither
+> is Gmail-alert ingest, which is where Indian coverage has to come from.**
 > Update this header every time a phase completes. It is the first thing read each session.
 
 Ship each phase end-to-end before starting the next. A working Phase 1 already removes
@@ -41,7 +42,8 @@ yet. This alone replaces the manual searching.
 - [x] `src/match/profile.ts` — resume PDF → typed profile (`unpdf` + Groq)
 - [ ] `src/match/embed.ts` — bge-small + cosine prefilter
 - [x] `src/llm/` — Groq client + one interface per job (decision 011)
-- [ ] `src/match/score.ts` — scorer with Zod structured output
+- [x] `src/match/score.ts` — four factor ratings from the model, score computed in code
+      (decision 012). `--distribution` prints the histogram the calibration gate needs.
 - [ ] `src/notify/telegram.ts` — morning digest
 - [x] `src/main.ts` — stage runner + `--stage` / `--dry-run` flags *(done in Phase 0;
       stages just need real implementations plugged into `STAGES`)*
@@ -51,8 +53,13 @@ yet. This alone replaces the manual searching.
 ### Calibration gate — do not skip
 
 Run **scoring only for 3 days**, then look at the actual score distribution before
-setting thresholds. The `70` / `85` values in `architecture.md` are guesses. Record the
-real numbers in `decisions.md` when you set them.
+setting thresholds: `node src/match/score.ts --distribution`. The `70` / `85` values are
+guesses. Record the real numbers in `decisions.md` when you set them.
+
+Two knobs, not one. If the distribution is wrong-shaped rather than merely shifted, the
+factor weights in `src/match/score.ts` are the thing to change, not `MATCH_THRESHOLD` —
+the stored per-factor ratings say which factor is doing it. Bump `PROMPT_VERSION` when you
+change either the prompt or the weights, so the old distribution survives for comparison.
 
 ---
 

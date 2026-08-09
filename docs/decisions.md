@@ -183,3 +183,82 @@ a month it was not saving much anyway.
 **Revisit when.** Reply rate after the first few weeks of sending. If drafts are getting
 ignored, moving *only* the drafting stage to `claude-opus-5` costs ~$3.75/month and is a
 one-file change — that is the first thing to try, before rewriting prompts.
+
+---
+
+## 012 — The model rates factors; the score is arithmetic
+
+**Decision.** The scorer does not choose a 0–100 fit score. It rates four narrow factors
+0–10 — `level_fit`, `location_fit`, `stack_fit`, `domain_fit` — and `fitScore()` in
+`src/match/score.ts` combines them with fixed weights. Two hard gates live in that
+function, not in the prompt: a `level_fit` or `location_fit` of 0 or 1 caps the total at
+30, below the MATCHED threshold. Scoring also runs at `temperature: 0`.
+
+**Why.** Measured 2026-08-10, asking for one holistic score: the *same* Canonical posting
+scored **55, 78, 90 and 92** on four runs of an identical prompt. `REJECTED` is terminal,
+so that spread means a good posting is permanently discarded on a bad roll of the dice.
+
+`temperature: 0` did not fix it — 55/78/90 were all at temperature 0. Groq batches
+mixture-of-experts models and exposes no seed, so identical requests are not reproducible.
+Retrying does not help either: every sample is equally valid, so there is nothing to
+detect. The variance had to be designed out rather than retried away.
+
+Two things do that. Narrow factors are questions with observable answers ("does this
+posting demand years of experience") instead of a judgement call spread over 100 points,
+so there is much less room to disagree. And the arithmetic is deterministic by
+construction — same ratings, same score, forever. As a bonus the stored factors explain
+every score: a surprising 30 can be read as "location_fit 0" rather than re-litigated.
+
+The gates also fix a separate problem. The old prompt stated the hard rules as prose
+("years of experience beats everything else") and the model agreed with them and then
+ignored them. Code cannot ignore them.
+
+**Rejected.** *Median of three calls* — mathematically sound, but 3× the calls and ~42
+minutes for 30 jobs, and it smooths the symptom while leaving the hard rules unenforced.
+*A bigger model* — no evidence 120b is more consistent, and it burns the rate limit that
+drafting needs. *Making REJECTED non-terminal* — hides the problem and doubles the scoring
+bill every day.
+
+**Cost.** Still one call per job. Weights and gate thresholds are named constants in
+`src/match/score.ts`, so calibration can move them without touching the prompt.
+
+**Revisit when.** The calibration gate runs (decision 008). The weights are reasoned, not
+measured: if the distribution piles up in one band, the weights are the first thing to
+look at, and the stored factors say which one is doing it.
+
+---
+
+## 013 — What the free tier actually costs, and how retries have to behave
+
+**Decision.** Three changes to `src/llm/groq.ts`, all forced by measurements from the first
+real scoring runs:
+
+1. A 429's wait is read from the **error body** (`"Please try again in 18.945s"`), not only
+   from a `retry-after` header, plus a second of headroom.
+2. A retry after a *JSON* failure nudges `temperature` from 0 to 0.3. A retry after a 429
+   does not — it is re-sent exactly as it was.
+3. `MAX_SCORES_PER_RUN` (60) caps model calls per run; the overflow stays `DISCOVERED`.
+
+**Why.** The free tier's binding limit is **8,000 tokens per minute**, and Groq bills the
+*request* as prompt + `max_tokens` — a scoring call with a 2,500-token prompt and
+`max_tokens: 1024` is charged 3,570. That is **two scoring calls per minute**, so the third
+call inside any minute 429s. Without reading the wait from the body, the exponential
+fallback (1s, 2s, 4s) spends all three retries inside the same window and the job is lost
+for the day. This actually happened: run 4 lost one of five jobs.
+
+The temperature nudge is subtler. At `temperature: 0` a retry is *not* a fresh roll of the
+dice — the request is identical, so a generation that failed schema validation tends to fail
+again. One posting failed four attempts in a row, then succeeded on a later identical call.
+Retrying only works if something changes, so the retry changes the one thing it can.
+
+**Consequences to plan around.** ~30 seconds per scored job, and roughly two a minute; 60
+jobs is about half an hour. That is fine inside a 06:00 cron and is the reason the per-run
+cap exists rather than an unbounded loop. If volume grows past that, the cheapest lever is
+the prompt: `MAX_DESCRIPTION_CHARS` is ~1,500 of those 2,500 prompt tokens.
+
+**Rejected.** *Raising `max_tokens` for headroom* — it is charged whether used or not, so it
+directly reduces calls per minute. *Dropping to one call per minute to never 429* — halves
+throughput to avoid an error that is already handled correctly.
+
+**Revisit when.** Gmail-alert ingest lands and the daily queue jumps from 5 to dozens. If
+scoring starts dominating the run, trim the prompt before paying for a higher tier.

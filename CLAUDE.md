@@ -24,6 +24,9 @@ node src/main.ts                  # full daily pipeline
 node src/main.ts --stage=score    # run one stage in isolation
 node src/main.ts --dry-run        # everything except sending
 node --test                       # tests
+
+node src/match/score.ts --job=12       # score one job, print it, write nothing
+node src/match/score.ts --distribution # the histogram the calibration gate reads
 ```
 
 ## Invariants — violating these causes real-world damage
@@ -41,6 +44,11 @@ node --test                       # tests
 
 ## Non-obvious facts
 
+- **Never ask a model for a 0–100 score.** The scorer rates four factors 0–10 and
+  `fitScore()` does the arithmetic. Asked for the number directly, the same posting came
+  back 55, 78, 90 and 92 — and `REJECTED` is terminal. Decision 012.
+- Groq is not reproducible even at `temperature: 0` — no seed, batched MoE. Design the
+  variance out; do not retry it away.
 - Groq model IDs are **verified against the live `/models` endpoint**, never hard-coded
   from memory. Its catalogue changes. Same rule that `data/companies.json` follows.
 - Sends are jittered 3–15 min apart starting 09:00. Never fire them all at pipeline time.

@@ -71,7 +71,7 @@ This section explains the *non-obvious* parts only.
 |---|---|
 | `companies` | Dedup on normalised domain. Holds ATS type + slug, careers/team URLs. |
 | `jobs` | One row per posting. Carries `state`. |
-| `job_scores` | PK `(job_id, prompt_version)`. |
+| `job_scores` | PK `(job_id, prompt_version)`. Holds the four factor ratings *and* the score computed from them. |
 | `contacts` | Scoped to **company**, not job. `unique(email)`. |
 | `outreach` | `unique(job_id)`. Holds Gmail IDs + timestamps. |
 | `runs` | One row per pipeline execution: stats + errors. |
@@ -100,13 +100,20 @@ instantly.
 Changing the scoring rubric should not destroy score history. Bump `prompt_version`,
 re-score, compare distributions before switching thresholds.
 
+### Why the scorer does not choose the score
+
+The model rates four narrow factors 0–10 (`level_fit`, `location_fit`, `stack_fit`,
+`domain_fit`); `fitScore()` in `src/match/score.ts` does the arithmetic and applies the two
+hard gates. Asked for one holistic 0–100 number, the same posting scored 55, 78, 90 and 92
+on four identical prompts — and `REJECTED` is terminal. Decision 012 has the measurements.
+
 ## Stage contracts
 
 | # | Stage | Reads | Writes | Cadence |
 |---|---|---|---|---|
 | 1 | Ingest | source adapters | `jobs` (upsert), `companies` | daily |
 | 2 | Prefilter | `jobs` @ DISCOVERED | in-memory → top ~30 | daily |
-| 3 | Score | prefilter output | `job_scores`, state | daily |
+| 3 | Score | `jobs` @ DISCOVERED (prefilter is not built — see `phases.md`) | `job_scores`, state | daily |
 | 4 | Contacts | `jobs` @ MATCHED | `contacts`, state | daily |
 | 5 | Draft | job + score + contact | `outreach` @ DRAFTED | daily |
 | 6 | Gate + Send | `outreach` @ DRAFTED / approved | Gmail, state → SENT | daily + on-approval |
@@ -135,7 +142,7 @@ The pipeline must be safe to run twice in a row.
 | Stage | Rule |
 |---|---|
 | Ingest | Upsert on `dedup_key`; bump `last_seen_at` |
-| Score | Skip if `(job_id, prompt_version)` row exists |
+| Score | Only picks up DISCOVERED rows; a `(job_id, prompt_version)` row already there is reused rather than re-requested |
 | Contacts | Skip if the company already has a contact |
 | Draft | Skip if an `outreach` row exists for `job_id` |
 | Send | See below |

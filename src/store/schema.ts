@@ -160,7 +160,13 @@ export type Job = z.infer<typeof Job>;
 export const JobScore = z.object({
   job_id: z.number().int().positive(),
   prompt_version: z.number().int().positive(),
+  /** Computed from the four factors below by `fitScore()`, not chosen by the model. */
   fit_score: z.number().int().min(0).max(100),
+  /** The model's four factor ratings, kept so a surprising score can be taken apart. */
+  level_fit: z.number().int().min(0).max(10),
+  location_fit: z.number().int().min(0).max(10),
+  stack_fit: z.number().int().min(0).max(10),
+  domain_fit: z.number().int().min(0).max(10),
   /** Why the scorer landed there. Shown in the digest. */
   reasoning: z.string(),
   /** One concrete, specific detail the draft stage opens the email with. */
@@ -283,9 +289,20 @@ export type RawJob = z.infer<typeof RawJob>;
 /**
  * The scorer's structured output. Nothing else about the model response is trusted —
  * this schema both generates the JSON Schema sent to Groq and validates what comes back.
+ *
+ * Note what is **not** here: `fit_score`. The model rates four narrow factors 0–10 and
+ * `src/match/score.ts` does the arithmetic. Asking for one holistic 0–100 number produced
+ * 55, 78 and 90 on three runs of the identical posting — decision 012.
  */
 export const ScoreResult = z.object({
-  fit_score: z.number().int().min(0).max(100),
+  /** Can a final-year student take this role at all? 0 = needs years of experience. */
+  level_fit: z.number().int().min(0).max(10),
+  /** India, or genuinely remote-global? 0 = onsite abroad with no remote option. */
+  location_fit: z.number().int().min(0).max(10),
+  /** Overlap between the posting's core tech and what the candidate has actually built. */
+  stack_fit: z.number().int().min(0).max(10),
+  /** Overlap in problem domain — retrieval, backend, distributed systems, ML. */
+  domain_fit: z.number().int().min(0).max(10),
   reasoning: z.string().min(1),
   hook: z.string().min(1),
 });
