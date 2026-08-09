@@ -43,8 +43,10 @@ blocker for a useful digest. Full reasoning in `docs/decisions.md` 010.
    add his own email as a test user) → create Desktop app credentials → download as
    `credentials.json` into the project root. Scopes: `gmail.readonly`, `gmail.compose`,
    `gmail.send`.
-2. **Resume file** — needed for `src/match/profile.ts`. PDF or text, any path he names.
-3. **Telegram bot token** — talk to `@BotFather`, `/newbot`, paste the token into `.env`.
+2. **Telegram bot token** — talk to `@BotFather`, `/newbot`, paste the token into `.env`.
+
+*(Resume and Groq key are both done — `GROQ_API_KEY` is in `.env`, and
+`data/profile.json` is extracted and verified against the PDF.)*
 
 *(Target geography is settled — India + remote-global, decision 009.)*
 
@@ -52,15 +54,25 @@ blocker for a useful digest. Full reasoning in `docs/decisions.md` 010.
 
 Either is unblocked and useful:
 
-- `src/match/embed.ts` + `src/match/score.ts` — needs only `ANTHROPIC_API_KEY` and a
-  resume. Works on the 5 real rows already in the DB.
+- `src/match/score.ts` — fully unblocked. `src/llm/groq.ts` + `complete()` handle the
+  structured output, `loadProfile()` gives the profile. Works on the 5 real rows in the DB.
+- `src/match/embed.ts` — bge-small prefilter. Needs no key at all, but installs
+  `@huggingface/transformers` (~500MB of ONNX runtime). At 5 jobs/day the prefilter is
+  not yet earning its keep — scoring everything is cheaper. Revisit when ingest volume
+  grows, i.e. after Gmail alerts land.
 - More ATS coverage — add names to `src/ingest/candidates.ts`, run
   `node src/ingest/refresh-companies.ts`. It only *adds* verified boards; a company is
   removed only when a probe confirms it is gone, never when a probe errors.
 
-Deps installed so far: `zod`, `typescript`, `@types/node`. The rest of the stack
-(`@anthropic-ai/sdk`, `googleapis`, `@huggingface/transformers`, `grammy`) gets installed
-when the stage that needs it is written, not before.
+Deps installed so far: `zod`, `unpdf`, `typescript`, `@types/node`. No LLM SDK — Groq
+speaks the OpenAI chat shape, so `src/llm/groq.ts` is plain `fetch`. The rest
+(`googleapis`, `@huggingface/transformers`, `grammy`) gets installed when the stage that
+needs it is written, not before.
+
+**Measured, and the reason `complete()` retries:** `gpt-oss-120b` failed to produce
+schema-valid JSON on roughly one call in four, then succeeded three times running on the
+identical prompt. It is a dice roll, not a capability gap — do not "fix" it by changing
+models or loosening the schema.
 
 ## Context not captured in code
 

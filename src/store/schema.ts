@@ -281,7 +281,8 @@ export const RawJob = z.object({
 export type RawJob = z.infer<typeof RawJob>;
 
 /**
- * The scorer's structured output. Nothing else about the Anthropic response is trusted.
+ * The scorer's structured output. Nothing else about the model response is trusted —
+ * this schema both generates the JSON Schema sent to Groq and validates what comes back.
  */
 export const ScoreResult = z.object({
   fit_score: z.number().int().min(0).max(100),
@@ -289,3 +290,85 @@ export const ScoreResult = z.object({
   hook: z.string().min(1),
 });
 export type ScoreResult = z.infer<typeof ScoreResult>;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Profile — the resume, parsed once, in a shape the scorer and drafter can use
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const ProfileProject = z.object({
+  name: z.string(),
+  /** One or two sentences. What it is and what was hard about it. */
+  summary: z.string(),
+  tech: z.array(z.string()),
+  /** Concrete, quantified results. These become email hooks — keep the numbers. */
+  highlights: z.array(z.string()),
+});
+export type ProfileProject = z.infer<typeof ProfileProject>;
+
+export const ProfileExperience = z.object({
+  company: z.string(),
+  role: z.string(),
+  /** Free text as written on the resume, e.g. "May 2025 – Aug 2025". */
+  dates: z.string(),
+  summary: z.string(),
+});
+export type ProfileExperience = z.infer<typeof ProfileExperience>;
+
+/**
+ * An array, not one object: dual-degree programmes are normal in India — this resume
+ * lists Scaler School of Technology and BITS Pilani concurrently, and an earlier
+ * single-object version of this schema silently dropped one of them.
+ */
+export const ProfileEducation = z.object({
+  institution: z.string(),
+  degree: z.string(),
+  /** As written, e.g. "2024 – 2027" or "2024 – Present". */
+  dates: z.string(),
+  location: z.string(),
+  /** CGPA/percentage exactly as written. Empty when absent. */
+  score: z.string(),
+});
+export type ProfileEducation = z.infer<typeof ProfileEducation>;
+
+/**
+ * Skills keep the resume's own grouping ("Languages", "AI & Data", "Cloud & DevOps")
+ * rather than being forced into fixed buckets. A fixed `languages` + `frameworks` pair
+ * dropped the entire AI stack — LangChain, Cohere, Qdrant — which is the most relevant
+ * part of this resume for the roles being targeted.
+ */
+export const ProfileSkillGroup = z.object({
+  category: z.string(),
+  items: z.array(z.string()),
+});
+export type ProfileSkillGroup = z.infer<typeof ProfileSkillGroup>;
+
+/**
+ * Lives in `data/profile.json`, which is gitignored — it holds a phone number and an
+ * email address and must never reach the public repo.
+ */
+export const Profile = z.object({
+  name: z.string(),
+  email: z.string(),
+  phone: z.string(),
+  links: z.array(z.string()),
+  education: z.array(ProfileEducation),
+  /** Two or three sentences, written to be read by the scorer. */
+  summary: z.string(),
+  skills: z.array(ProfileSkillGroup),
+  /** Problem domains rather than tools — "RAG", "distributed systems", "browser automation". */
+  domains: z.array(z.string()),
+  projects: z.array(ProfileProject),
+  experience: z.array(ProfileExperience),
+  /** Competitive programming, awards, anything quantified. Real email-hook material. */
+  achievements: z.array(z.string()),
+  /** Roles this person should be matched against. Drives the scoring rubric. */
+  target_roles: z.array(z.string()),
+  extracted_at: Timestamp,
+  /** Which model produced this, so a bad parse is traceable. */
+  model: z.string(),
+});
+export type Profile = z.infer<typeof Profile>;
+
+/** What the model returns — the metadata fields are added by us afterwards. */
+export const ProfileExtraction = Profile.omit({ extracted_at: true, model: true });
+export type ProfileExtraction = z.infer<typeof ProfileExtraction>;

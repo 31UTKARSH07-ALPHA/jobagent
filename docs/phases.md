@@ -38,9 +38,9 @@ yet. This alone replaces the manual searching.
 - [ ] `src/ingest/gmail-alerts.ts` — parse LinkedIn + Naukri alert emails
       **← higher priority than it looks: the big Indian companies are not on any
       supported ATS, so this is where Indian coverage actually comes from (decision 010)**
-- [ ] `src/match/profile.ts` — resume PDF → typed profile **(needs the resume file)**
+- [x] `src/match/profile.ts` — resume PDF → typed profile (`unpdf` + Groq)
 - [ ] `src/match/embed.ts` — bge-small + cosine prefilter
-- [ ] `src/llm/` — Groq client + one interface per job (decision 011)
+- [x] `src/llm/` — Groq client + one interface per job (decision 011)
 - [ ] `src/match/score.ts` — scorer with Zod structured output
 - [ ] `src/notify/telegram.ts` — morning digest
 - [x] `src/main.ts` — stage runner + `--stage` / `--dry-run` flags *(done in Phase 0;
