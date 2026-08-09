@@ -158,3 +158,28 @@ higher priority than it looks in the Phase 1 list.
 
 **Rejected.** Scraping the YC directory for slugs (the original Phase 1 plan). Same
 verification problem, more moving parts, and YC skews US-onsite — the wrong geography.
+
+---
+
+## 011 — Groq runs both LLM stages. Supersedes 003
+
+**Decision.** Scoring *and* drafting run on Groq's free tier. No Anthropic API spend.
+Both stages sit behind a provider interface (`src/llm/`), so swapping either one back
+is a one-file change.
+
+**Why.** The Anthropic API is prepaid with no free tier — the routing in decision 003
+worked out to roughly $7/month (scoring ~$3.30, drafting ~$3.75, at 30 scored jobs and
+5 drafts a day). The budget line for this project is free tiers only, and Groq's free
+tier covers both stages at this volume.
+
+**Known tradeoff, accepted.** Scoring is a rubric task and should be unaffected. Drafting
+is the part that degrades: the email is the only thing a recruiter ever sees, and open
+models write competent but more generic cold emails — which is the exact failure mode
+that gets ignored. Utkarsh chose free over that difference with the tradeoff stated.
+
+**Also lost:** prompt caching on the drafting stage (an Anthropic feature). At ~150 drafts
+a month it was not saving much anyway.
+
+**Revisit when.** Reply rate after the first few weeks of sending. If drafts are getting
+ignored, moving *only* the drafting stage to `claude-opus-5` costs ~$3.75/month and is a
+one-file change — that is the first thing to try, before rewriting prompts.

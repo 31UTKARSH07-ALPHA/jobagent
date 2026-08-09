@@ -10,7 +10,8 @@ Everything else lives in `docs/` and is read on demand.
 
 - **Node 25** — runs `.ts` files natively, no build step in dev, no bundler
 - **`node:sqlite`** — built in, no native compile. DB at `data/jobagent.db`
-- **`@anthropic-ai/sdk`** — `claude-haiku-4-5` scores, `claude-opus-5` drafts
+- **Groq free tier** — scores *and* drafts, behind `src/llm/` so a provider swap is
+  one file (decision 011 — supersedes 003, which used Anthropic and cost ~$7/mo)
 - **Zod** — `src/store/schema.ts` is the single source of truth for every shape
 - **`@huggingface/transformers`** — bge-small embeddings, local, free
 - **`googleapis`** — Gmail read/draft/send
@@ -40,8 +41,8 @@ node --test                       # tests
 
 ## Non-obvious facts
 
-- Prompt caching does **not** work on the scoring prompt: `claude-haiku-4-5` has a
-  4096-token minimum cacheable prefix and our prefix is ~1200. Not a bug.
+- Groq model IDs are **verified against the live `/models` endpoint**, never hard-coded
+  from memory. Its catalogue changes. Same rule that `data/companies.json` follows.
 - Sends are jittered 3–15 min apart starting 09:00. Never fire them all at pipeline time.
 - LinkedIn/Naukri are ingested by parsing *my own Gmail job-alert emails*, never scraped.
 - Contacts are cached per **company**, not per job. Assume the cache is warm.

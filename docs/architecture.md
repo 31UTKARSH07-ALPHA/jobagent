@@ -156,19 +156,21 @@ trail in the real Gmail Sent folder.
 
 ## Model routing
 
-| Job | Model | Why |
+All three LLM jobs run on **Groq's free tier** (decision 011). Total API spend: $0.
+
+| Job | Frequency | Notes |
 |---|---|---|
-| Resume PDF → profile | `claude-opus-5` | Once ever. Quality matters, cost is irrelevant. |
-| Score ~30 jobs/day | `claude-haiku-4-5` | Rubric task. Opus here triples cost for no gain. |
-| Draft ~5 emails/day | `claude-opus-5` | This is the output a human reads. Worth it. |
+| Resume PDF → profile | Once ever | Quality matters most; re-run by hand if it looks wrong. |
+| Score ~30 jobs/day | Daily | Rubric task with Zod-validated structured output. |
+| Draft ~5 emails/day | Daily | The only output a human reads — the quality-sensitive one. |
 
-Runs ~$7/month. The Batch API would save ~$1.50/month in exchange for making the
-pipeline asynchronous — not worth it at this volume. The scorer sits behind an interface
-so batching can be swapped in if volume grows 10×.
+Every call goes through `src/llm/`, which exposes one interface per job. Moving a single
+stage to another provider is a one-file change; decision 011 records the intended escape
+hatch (drafting → `claude-opus-5`, ~$3.75/month) if reply rates disappoint.
 
-**Prompt caching does not help the scorer.** `claude-haiku-4-5` has a 4096-token minimum
-cacheable prefix; our profile + rubric prefix is ~1200. It silently will not cache. It
-*does* help the Opus drafting stage (512-token minimum).
+**Model IDs are verified, not remembered.** Groq's catalogue changes; `src/llm/models.ts`
+is checked against the live `/openai/v1/models` endpoint rather than hard-coded from
+memory — same rule as ATS slugs (decision 010).
 
 ## Daily timeline
 

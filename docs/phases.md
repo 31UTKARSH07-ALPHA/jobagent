@@ -38,9 +38,10 @@ yet. This alone replaces the manual searching.
 - [ ] `src/ingest/gmail-alerts.ts` — parse LinkedIn + Naukri alert emails
       **← higher priority than it looks: the big Indian companies are not on any
       supported ATS, so this is where Indian coverage actually comes from (decision 010)**
-- [ ] `src/match/profile.ts` — resume PDF → typed profile via Opus **(needs the resume file)**
+- [ ] `src/match/profile.ts` — resume PDF → typed profile **(needs the resume file)**
 - [ ] `src/match/embed.ts` — bge-small + cosine prefilter
-- [ ] `src/match/score.ts` — Haiku scorer with Zod structured output
+- [ ] `src/llm/` — Groq client + one interface per job (decision 011)
+- [ ] `src/match/score.ts` — scorer with Zod structured output
 - [ ] `src/notify/telegram.ts` — morning digest
 - [x] `src/main.ts` — stage runner + `--stage` / `--dry-run` flags *(done in Phase 0;
       stages just need real implementations plugged into `STAGES`)*
@@ -60,7 +61,7 @@ real numbers in `decisions.md` when you set them.
 - [ ] `src/contacts/cascade.ts` — posting metadata → team page → GitHub → pattern
 - [ ] `src/contacts/verify.ts` — MX check via `dns/promises`
 - [ ] Confidence assignment (see `CLAUDE.md` invariant 3)
-- [ ] `src/draft/compose.ts` — Opus drafting, uses `job_scores.hook`
+- [ ] `src/draft/compose.ts` — drafting, uses `job_scores.hook`
 - [ ] Write drafts into Gmail; nothing sends yet
 - [ ] Digest shows drafts inline for review
 
@@ -88,5 +89,5 @@ real numbers in `decisions.md` when you set them.
 - Own domain + Google Workspace + SPF/DKIM/DMARC (before volume goes up)
 - Move off the laptop: GitHub Actions or a $5 VPS
 - More sources: HN Who-is-Hiring, Adzuna, Remotive, Wellfound
-- Batch API for scoring (only if volume grows ~10×)
+- Move drafting to `claude-opus-5` (~$3.75/mo) if reply rates disappoint — decision 011
 - Reply classification → auto-schedule interview prep
