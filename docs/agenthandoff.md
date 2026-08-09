@@ -13,14 +13,24 @@ Do not restate architecture here. Point at `docs/architecture.md`.
 
 ## Now
 
-Phase 0 done. The ATS half of Phase 1 ingest is done and runs against real boards:
-`node src/main.ts --stage=ingest` polls 51 verified boards, applies the title and
-geography filters, and writes `jobs` + `companies`. Second run in a row discovers 0 new
-rows — idempotency holds. 34 tests green, `tsc --noEmit` clean.
+Phase 0 complete. Phase 1 is roughly half built, and everything below runs for real —
+not as scaffolding. 42 tests green, `tsc --noEmit` clean, working tree clean, all pushed.
 
-**The number that matters: 4,710 postings seen → 5 kept.** That is not a bug (4,693 are
-senior or non-engineering, 10 are foreign-onsite), but it does mean the ATS pollers alone
-will not fill a daily digest. See the coverage note below.
+| Works today | Command |
+|---|---|
+| ATS ingest across 51 verified boards | `node src/main.ts --stage=ingest` |
+| Re-verify / extend the board list | `node src/ingest/refresh-companies.ts` |
+| Resume → `data/profile.json` | `node src/match/profile.ts --resume=<pdf>` |
+| Inspect the parsed profile | `node src/match/profile.ts --show` |
+| Any model call | `complete()` / `chat()` in `src/llm/groq.ts` |
+
+**The number that matters: 4,710 postings seen → 5 kept.** Not a bug — 4,693 are senior
+or non-engineering, 10 are foreign-onsite — but it does mean the ATS pollers alone will
+never fill a daily digest. See the coverage note below; this is the single most important
+thing to understand before building more.
+
+Not built yet: scoring, the Telegram digest, contacts, drafting, sending. `src/main.ts`
+still logs those stages as no-ops.
 
 ## In flight
 
@@ -52,10 +62,18 @@ blocker for a useful digest. Full reasoning in `docs/decisions.md` 010.
 
 ## Next action
 
-Either is unblocked and useful:
+**Start here: `src/match/score.ts`.** Everything it needs exists — `complete()` in
+`src/llm/groq.ts` handles the structured output against `ScoreResult`, `loadProfile()`
+returns the parsed resume, and there are 5 real `DISCOVERED` rows in the DB to score.
+Write `job_scores`, then transition `SCORED` → `MATCHED`/`REJECTED` through
+`src/store/state.ts` (never `UPDATE jobs SET state` directly).
 
-- `src/match/score.ts` — fully unblocked. `src/llm/groq.ts` + `complete()` handle the
-  structured output, `loadProfile()` gives the profile. Works on the 5 real rows in the DB.
+Then, in order of value:
+
+- **Gmail OAuth + `src/ingest/gmail-alerts.ts`** — the real unlock. See the coverage note.
+- `src/notify/telegram.ts` — closes Phase 1: a digest actually arrives each morning.
+
+Deliberately deferred:
 - `src/match/embed.ts` — bge-small prefilter. Needs no key at all, but installs
   `@huggingface/transformers` (~500MB of ONNX runtime). At 5 jobs/day the prefilter is
   not yet earning its keep — scoring everything is cheaper. Revisit when ingest volume
@@ -78,8 +96,9 @@ models or loosening the schema.
 
 - Send mode decided: **hybrid** — auto-send only when `confidence='high'` AND
   `fit_score > 85`; everything else queues for approval.
-- Budget: **free tiers only**. No paid contact APIs. Anthropic API (~$7/mo) is the one
-  accepted cost.
+- Budget: **free tiers only, and now literally $0** — no paid contact APIs, and both LLM
+  stages moved to Groq (decision 011, supersedes 003). The escape hatch if drafts get
+  ignored is drafting-only → `claude-opus-5`, ~$3.75/mo, one file.
 - Thresholds `70` / `85` are placeholders pending the Phase 1 calibration gate.
 
 ## Open questions not yet settled
