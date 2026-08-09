@@ -13,35 +13,52 @@ Do not restate architecture here. Point at `docs/architecture.md`.
 
 ## Now
 
-Phase 0 done and committed. `npm run dry-run` creates `data/jobagent.db`, walks all six
-daily stages as logged no-ops, and exits 0. `node --test` is 9 green. `npx tsc --noEmit`
-is clean.
+Phase 0 done. The ATS half of Phase 1 ingest is done and runs against real boards:
+`node src/main.ts --stage=ingest` polls 51 verified boards, applies the title and
+geography filters, and writes `jobs` + `companies`. Second run in a row discovers 0 new
+rows — idempotency holds. 34 tests green, `tsc --noEmit` clean.
 
-The stage runner (`src/main.ts`) already has the `--stage` / `--dry-run` plumbing and a
-`STAGES` registry — Phase 1 is filling in real `run()` bodies, not restructuring.
+**The number that matters: 4,710 postings seen → 5 kept.** That is not a bug (4,693 are
+senior or non-engineering, 10 are foreign-onsite), but it does mean the ATS pollers alone
+will not fill a daily digest. See the coverage note below.
 
 ## In flight
 
 Nothing. Clean tree, no partial work.
 
+## Coverage problem worth understanding before building more
+
+102 of 153 hand-picked candidate companies have **no board on Greenhouse/Lever/Ashby/
+Workable** — including nearly every large Indian company (Zomato, Swiggy, Flipkart,
+Zerodha, Razorpay, Freshworks, Zoho). They run their own portals, Workday or Darwinbox.
+
+So the 51 verified boards skew global/remote, and Indian coverage has to come from
+`src/ingest/gmail-alerts.ts`. That moves Gmail OAuth from "nice to have" to **the**
+blocker for a useful digest. Full reasoning in `docs/decisions.md` 010.
+
 ## Blocked on Utkarsh
 
-1. **Resume file** — needed for `src/match/profile.ts`. PDF or text, any path he names.
-2. **Google Cloud OAuth** — needs his browser, ~10 min. Create project → enable Gmail
-   API → OAuth consent screen (External, testing, add his own email as a test user) →
-   create Desktop app credentials → download as `credentials.json` into the project root.
-   Scopes: `gmail.readonly`, `gmail.compose`, `gmail.send`.
+1. **Google Cloud OAuth** — now the top blocker, not the third. Needs his browser,
+   ~10 min. Create project → enable Gmail API → OAuth consent screen (External, testing,
+   add his own email as a test user) → create Desktop app credentials → download as
+   `credentials.json` into the project root. Scopes: `gmail.readonly`, `gmail.compose`,
+   `gmail.send`.
+2. **Resume file** — needed for `src/match/profile.ts`. PDF or text, any path he names.
 3. **Telegram bot token** — talk to `@BotFather`, `/newbot`, paste the token into `.env`.
-4. **Target geography** — still unanswered. Only blocks the `data/companies.json` seed
-   list, nothing else. India / remote-global / US-Europe, multi-select.
+
+*(Target geography is settled — India + remote-global, decision 009.)*
 
 ## Next action
 
-`src/ingest/types.ts` then `src/ingest/ats.ts` — the ATS pollers need none of the
-blockers above and produce real rows immediately. `RawJob` (what an adapter emits) is
-already defined in `src/store/schema.ts`.
+Either is unblocked and useful:
 
-Only deps installed so far are `zod` + `typescript`/`@types/node`. The rest of the stack
+- `src/match/embed.ts` + `src/match/score.ts` — needs only `ANTHROPIC_API_KEY` and a
+  resume. Works on the 5 real rows already in the DB.
+- More ATS coverage — add names to `src/ingest/candidates.ts`, run
+  `node src/ingest/refresh-companies.ts`. It only *adds* verified boards; a company is
+  removed only when a probe confirms it is gone, never when a probe errors.
+
+Deps installed so far: `zod`, `typescript`, `@types/node`. The rest of the stack
 (`@anthropic-ai/sdk`, `googleapis`, `@huggingface/transformers`, `grammy`) gets installed
 when the stage that needs it is written, not before.
 

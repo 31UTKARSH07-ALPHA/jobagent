@@ -117,4 +117,44 @@ nothing. `job_scores` is keyed on `prompt_version` specifically so re-scoring do
 destroy the comparison.
 
 **Revisit when.** Phase 1 calibration completes — record the observed distribution and
-the chosen values as decision 009.
+the chosen values as a new decision.
+
+---
+
+## 009 — Target geography: India plus remote-global
+
+**Decision.** Seed and filter for Indian companies and for remote-first companies that
+hire globally. US/Europe-onsite-only companies are excluded. Enforced at ingest by
+`matchesGeography` in `src/ingest/filter.ts`.
+
+**Why.** Utkarsh is India-based. A US onsite internship scores well on skills and is then
+a dead end on work authorisation, which is the worst possible failure mode: it burns a
+scoring call, a contact lookup, a draft, and a send slot to produce nothing.
+
+**Rejected.** Including US/Europe and letting the scorer sort it out. The scorer is a
+per-job cost; a regex is free.
+
+**Note.** The filter only *rejects* when a location clearly names somewhere else. Remote,
+Indian, and unlabelled locations are all kept — the scorer is still the judge.
+
+---
+
+## 010 — The company seed list is generated and verified, never hand-written
+
+**Decision.** `data/companies.json` is produced by `src/ingest/refresh-companies.ts`,
+which guesses slugs from `src/ingest/candidates.ts` and keeps only boards that answer
+with at least one live posting. It is the one thing under `data/` that is committed.
+
+**Why.** ATS slugs look guessable and are wrong about half the time —
+`boards-api.greenhouse.io/v1/boards/razorpay` is a 404 although Razorpay is real, and 102
+of 153 hand-picked candidates turned out to have no board on the four supported ATSes at
+all. A hand-written list would poll dead URLs indefinitely and nobody would notice.
+
+**Consequence worth knowing.** Most large Indian consumer companies — Zomato, Swiggy,
+Flipkart, Zerodha, Freshworks, Zoho — are not on Greenhouse/Lever/Ashby/Workable. They
+run their own portals or Workday/Darwinbox. **Indian coverage therefore depends on the
+Gmail alert source, not the ATS pollers.** That makes `src/ingest/gmail-alerts.ts` a
+higher priority than it looks in the Phase 1 list.
+
+**Rejected.** Scraping the YC directory for slugs (the original Phase 1 plan). Same
+verification problem, more moving parts, and YC skews US-onsite — the wrong geography.

@@ -5,8 +5,12 @@ node_modules/
 credentials.json
 token.json
 
-# Local state: the DB is disposable, the pipeline rebuilds it
-data/
+# Local state: the DB is disposable, the pipeline rebuilds it.
+# `data/*` not `data/` — git will not re-include a file whose parent dir is excluded,
+# so the negation below only works against the glob form.
+data/*
+# ...except the verified company seed list, which is an input, not state
+!data/companies.json
 
 *.log
 .DS_Store

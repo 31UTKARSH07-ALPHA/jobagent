@@ -16,21 +16,10 @@ import { parseArgs } from 'node:util';
 import { openDb, DEFAULT_DB_PATH, type Db } from './store/db.ts';
 import { stateCounts } from './store/state.ts';
 import { nowIso, StageName, type RunError } from './store/schema.ts';
+import type { Stage, StageContext } from './stage.ts';
+import { runIngest } from './ingest/index.ts';
 
-export type StageContext = {
-  db: Db;
-  /** True means: do everything except irreversible outside effects (sending mail). */
-  dryRun: boolean;
-  log: (msg: string) => void;
-  /** Counters merged into `runs.stats` under this stage's name. */
-  count: (key: string, n?: number) => void;
-};
-
-type Stage = {
-  /** Which phase implements it. Unimplemented stages no-op instead of failing the run. */
-  phase: 1 | 2 | 3;
-  run: (ctx: StageContext) => Promise<void>;
-};
+export type { Stage, StageContext };
 
 const notYet = (phase: 1 | 2 | 3, what: string): Stage => ({
   phase,
@@ -44,7 +33,7 @@ const notYet = (phase: 1 | 2 | 3, what: string): Stage => ({
 export const DAILY_STAGES = ['ingest', 'prefilter', 'score', 'contacts', 'draft', 'send'] as const;
 
 export const STAGES: Record<string, Stage> = {
-  ingest: notYet(1, 'ATS pollers + Gmail alert parsing'),
+  ingest: { phase: 1, run: runIngest },
   prefilter: notYet(1, 'bge-small embeddings + cosine top ~30'),
   score: notYet(1, 'haiku scorer'),
   contacts: notYet(2, 'contact cascade + MX check'),

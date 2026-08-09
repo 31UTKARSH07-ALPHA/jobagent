@@ -1,6 +1,7 @@
 # Phases
 
-> **Status: Phase 0 complete. Phase 1 — daily digest — is next.**
+> **Status: Phase 1 in progress. ATS ingest works end to end against 51 live boards;
+> matching, scoring and the digest are not built yet.**
 > Update this header every time a phase completes. It is the first thing read each session.
 
 Ship each phase end-to-end before starting the next. A working Phase 1 already removes
@@ -29,11 +30,14 @@ most of the daily pain; Phases 2–3 are amplifiers, not prerequisites.
 The goal is a Telegram message every morning listing ~10 well-matched roles. No emails
 yet. This alone replaces the manual searching.
 
-- [ ] `src/ingest/types.ts` — the `JobSource` interface
-- [ ] `src/ingest/ats.ts` — Greenhouse, Lever, Ashby, Workable pollers
-- [ ] `data/companies.json` — seed list, 300–800 slugs (scrape YC directory once)
+- [x] `src/ingest/types.ts` — the `JobSource` interface
+- [x] `src/ingest/ats.ts` — Greenhouse, Lever, Ashby, Workable pollers
+- [x] `data/companies.json` — generated and verified by `src/ingest/refresh-companies.ts`,
+      not hand-written (decision 010). Add companies in `src/ingest/candidates.ts`.
 - [ ] Gmail OAuth flow → `token.json` **(needs Utkarsh in a browser, ~10 min)**
 - [ ] `src/ingest/gmail-alerts.ts` — parse LinkedIn + Naukri alert emails
+      **← higher priority than it looks: the big Indian companies are not on any
+      supported ATS, so this is where Indian coverage actually comes from (decision 010)**
 - [ ] `src/match/profile.ts` — resume PDF → typed profile via Opus **(needs the resume file)**
 - [ ] `src/match/embed.ts` — bge-small + cosine prefilter
 - [ ] `src/match/score.ts` — Haiku scorer with Zod structured output

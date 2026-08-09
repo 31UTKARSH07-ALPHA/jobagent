@@ -8,7 +8,7 @@
  * booleans are 0/1 integers, JSON columns are parsed before validation.
  * The DDL that matches them lives in `src/store/migrations/`.
  */
-import { z } from 'zod';
+import { z } from "zod";
 
 /** UTC ISO-8601, e.g. `2026-08-09T06:00:00.000Z`. Always store UTC. */
 export const Timestamp = z.iso.datetime();
@@ -27,37 +27,43 @@ export const nowIso = (): string => new Date().toISOString();
  * these values live in exactly one place, `src/store/state.ts`.
  */
 export const JobState = z.enum([
-  'DISCOVERED',
-  'SCORED',
-  'MATCHED',
-  'REJECTED',
-  'NEEDS_CONTACT',
-  'EXPIRED',
-  'DRAFTED',
-  'AUTO_SEND',
-  'PENDING_APPROVAL',
-  'REJECTED_BY_USER',
-  'SENT',
-  'FOLLOW_UP_SENT',
-  'REPLIED',
-  'BOUNCED',
-  'CLOSED',
+  "DISCOVERED",
+  "SCORED",
+  "MATCHED",
+  "REJECTED",
+  "NEEDS_CONTACT",
+  "EXPIRED",
+  "DRAFTED",
+  "AUTO_SEND",
+  "PENDING_APPROVAL",
+  "REJECTED_BY_USER",
+  "SENT",
+  "FOLLOW_UP_SENT",
+  "REPLIED",
+  "BOUNCED",
+  "CLOSED",
 ]);
 export type JobState = z.infer<typeof JobState>;
 
 /** Applicant-tracking system a company's postings live on. */
-export const AtsType = z.enum(['greenhouse', 'lever', 'ashby', 'workable', 'none']);
+export const AtsType = z.enum([
+  "greenhouse",
+  "lever",
+  "ashby",
+  "workable",
+  "none",
+]);
 export type AtsType = z.infer<typeof AtsType>;
 
 /** Which adapter produced a job row. Matches `JobSource.name`. */
 export const JobSourceName = z.enum([
-  'greenhouse',
-  'lever',
-  'ashby',
-  'workable',
-  'gmail-alert',
-  'hackernews',
-  'manual',
+  "greenhouse",
+  "lever",
+  "ashby",
+  "workable",
+  "gmail-alert",
+  "hackernews",
+  "manual",
 ]);
 export type JobSourceName = z.infer<typeof JobSourceName>;
 
@@ -65,28 +71,39 @@ export type JobSourceName = z.infer<typeof JobSourceName>;
  * Where a contact's email came from. This — not a paid verifier — is what decides
  * auto-send eligibility (decision 006).
  */
-export const ContactSource = z.enum(['posting', 'team_page', 'github', 'pattern']);
+export const ContactSource = z.enum([
+  "posting",
+  "team_page",
+  "github",
+  "pattern",
+]);
 export type ContactSource = z.infer<typeof ContactSource>;
 
-export const ContactConfidence = z.enum(['high', 'medium', 'low']);
+export const ContactConfidence = z.enum(["high", "medium", "low"]);
 export type ContactConfidence = z.infer<typeof ContactConfidence>;
 
 /**
  * Invariant 3: only `posting` and `team_page` are ever `high`, and only `high`
  * contacts can auto-send. Pattern guesses are always low.
  */
-export const confidenceForSource = (source: ContactSource): ContactConfidence =>
-  source === 'posting' || source === 'team_page' ? 'high' : source === 'github' ? 'medium' : 'low';
+export const confidenceForSource = (
+  source: ContactSource,
+): ContactConfidence =>
+  source === "posting" || source === "team_page"
+    ? "high"
+    : source === "github"
+      ? "medium"
+      : "low";
 
 /** Pipeline stages, in execution order. `track` runs on its own 4h schedule. */
 export const StageName = z.enum([
-  'ingest',
-  'prefilter',
-  'score',
-  'contacts',
-  'draft',
-  'send',
-  'track',
+  "ingest",
+  "prefilter",
+  "score",
+  "contacts",
+  "draft",
+  "send",
+  "track",
 ]);
 export type StageName = z.infer<typeof StageName>;
 
@@ -217,7 +234,11 @@ export type Run = z.infer<typeof Run>;
 // Insert shapes — what stages hand to the store, before ids and defaults exist
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const NewCompany = Company.omit({ id: true, created_at: true, updated_at: true });
+export const NewCompany = Company.omit({
+  id: true,
+  created_at: true,
+  updated_at: true,
+});
 export type NewCompany = z.infer<typeof NewCompany>;
 
 export const NewJob = Job.omit({
@@ -232,7 +253,11 @@ export const NewJob = Job.omit({
 });
 export type NewJob = z.infer<typeof NewJob>;
 
-export const NewContact = Contact.omit({ id: true, created_at: true, confidence: true });
+export const NewContact = Contact.omit({
+  id: true,
+  created_at: true,
+  confidence: true,
+});
 export type NewContact = z.infer<typeof NewContact>;
 
 /**
@@ -243,14 +268,14 @@ export type NewContact = z.infer<typeof NewContact>;
 export const RawJob = z.object({
   company_name: z.string().min(1),
   company_domain: z.string().min(3),
-  ats_type: AtsType.default('none'),
+  ats_type: AtsType.default("none"),
   ats_slug: z.string().nullable().default(null),
   source: JobSourceName,
   source_id: z.string().nullable().default(null),
   url: z.url(),
   title: z.string().min(1),
-  location: z.string().default(''),
-  description: z.string().default(''),
+  location: z.string().default(""),
+  description: z.string().default(""),
   posted_at: Timestamp.nullable().default(null),
 });
 export type RawJob = z.infer<typeof RawJob>;

@@ -1,0 +1,515 @@
+{
+  "generated_at": "2026-08-09T15:58:44.060Z",
+  "companies": [
+    {
+      "name": "Airbyte",
+      "domain": "airbyte.com",
+      "ats": "ashby",
+      "slug": "airbyte",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 10
+    },
+    {
+      "name": "Anthropic",
+      "domain": "anthropic.com",
+      "ats": "greenhouse",
+      "slug": "anthropic",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 392
+    },
+    {
+      "name": "Anyscale",
+      "domain": "anyscale.com",
+      "ats": "lever",
+      "slug": "anyscale",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 1
+    },
+    {
+      "name": "Atlan",
+      "domain": "atlan.com",
+      "ats": "ashby",
+      "slug": "atlan",
+      "regions": [
+        "india"
+      ],
+      "verified_jobs": 5
+    },
+    {
+      "name": "Buffer",
+      "domain": "buffer.com",
+      "ats": "ashby",
+      "slug": "buffer",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 2
+    },
+    {
+      "name": "Canonical",
+      "domain": "canonical.com",
+      "ats": "greenhouse",
+      "slug": "canonical",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 304
+    },
+    {
+      "name": "Cloudflare",
+      "domain": "cloudflare.com",
+      "ats": "greenhouse",
+      "slug": "cloudflare",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 299
+    },
+    {
+      "name": "Confluent",
+      "domain": "confluent.io",
+      "ats": "ashby",
+      "slug": "confluent",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 29
+    },
+    {
+      "name": "CRED",
+      "domain": "cred.club",
+      "ats": "lever",
+      "slug": "cred",
+      "regions": [
+        "india"
+      ],
+      "verified_jobs": 6
+    },
+    {
+      "name": "Druva",
+      "domain": "druva.com",
+      "ats": "greenhouse",
+      "slug": "druva",
+      "regions": [
+        "india"
+      ],
+      "verified_jobs": 29
+    },
+    {
+      "name": "Elastic",
+      "domain": "elastic.co",
+      "ats": "greenhouse",
+      "slug": "elastic",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 245
+    },
+    {
+      "name": "Fi Money",
+      "domain": "fi.money",
+      "ats": "lever",
+      "slug": "fi",
+      "regions": [
+        "india"
+      ],
+      "verified_jobs": 9
+    },
+    {
+      "name": "Figma",
+      "domain": "figma.com",
+      "ats": "greenhouse",
+      "slug": "figma",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 164
+    },
+    {
+      "name": "GitLab",
+      "domain": "gitlab.com",
+      "ats": "greenhouse",
+      "slug": "gitlab",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 188
+    },
+    {
+      "name": "Grafana Labs",
+      "domain": "grafana.com",
+      "ats": "greenhouse",
+      "slug": "grafanalabs",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 155
+    },
+    {
+      "name": "Groww",
+      "domain": "groww.in",
+      "ats": "greenhouse",
+      "slug": "groww",
+      "regions": [
+        "india"
+      ],
+      "verified_jobs": 8
+    },
+    {
+      "name": "HackerRank",
+      "domain": "hackerrank.com",
+      "ats": "greenhouse",
+      "slug": "hackerrank",
+      "regions": [
+        "india"
+      ],
+      "verified_jobs": 32
+    },
+    {
+      "name": "Hugging Face",
+      "domain": "huggingface.co",
+      "ats": "workable",
+      "slug": "huggingface",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 7
+    },
+    {
+      "name": "Labelbox",
+      "domain": "labelbox.com",
+      "ats": "greenhouse",
+      "slug": "labelbox",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 8
+    },
+    {
+      "name": "LangChain",
+      "domain": "langchain.com",
+      "ats": "ashby",
+      "slug": "langchain",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 101
+    },
+    {
+      "name": "Linear",
+      "domain": "linear.app",
+      "ats": "ashby",
+      "slug": "linear",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 27
+    },
+    {
+      "name": "Meesho",
+      "domain": "meesho.com",
+      "ats": "lever",
+      "slug": "meesho",
+      "regions": [
+        "india"
+      ],
+      "verified_jobs": 49
+    },
+    {
+      "name": "Modal",
+      "domain": "modal.com",
+      "ats": "ashby",
+      "slug": "modal",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 31
+    },
+    {
+      "name": "MongoDB",
+      "domain": "mongodb.com",
+      "ats": "greenhouse",
+      "slug": "mongodb",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 405
+    },
+    {
+      "name": "Navi",
+      "domain": "navi.com",
+      "ats": "ashby",
+      "slug": "navi",
+      "regions": [
+        "india"
+      ],
+      "verified_jobs": 7
+    },
+    {
+      "name": "Netlify",
+      "domain": "netlify.com",
+      "ats": "greenhouse",
+      "slug": "netlify",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 3
+    },
+    {
+      "name": "Notion",
+      "domain": "notion.so",
+      "ats": "ashby",
+      "slug": "notion",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 127
+    },
+    {
+      "name": "Observe.AI",
+      "domain": "observe.ai",
+      "ats": "greenhouse",
+      "slug": "observeai",
+      "regions": [
+        "india"
+      ],
+      "verified_jobs": 19
+    },
+    {
+      "name": "Oyster",
+      "domain": "oysterhr.com",
+      "ats": "workable",
+      "slug": "oysterhr",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 1
+    },
+    {
+      "name": "Paytm",
+      "domain": "paytm.com",
+      "ats": "lever",
+      "slug": "paytm",
+      "regions": [
+        "india"
+      ],
+      "verified_jobs": 247
+    },
+    {
+      "name": "PhonePe",
+      "domain": "phonepe.com",
+      "ats": "greenhouse",
+      "slug": "phonepe",
+      "regions": [
+        "india"
+      ],
+      "verified_jobs": 76
+    },
+    {
+      "name": "Pinecone",
+      "domain": "pinecone.io",
+      "ats": "ashby",
+      "slug": "pinecone",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 8
+    },
+    {
+      "name": "Postman",
+      "domain": "postman.com",
+      "ats": "greenhouse",
+      "slug": "postman",
+      "regions": [
+        "india"
+      ],
+      "verified_jobs": 107
+    },
+    {
+      "name": "Railway",
+      "domain": "railway.app",
+      "ats": "ashby",
+      "slug": "railway",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 8
+    },
+    {
+      "name": "Ramp",
+      "domain": "ramp.com",
+      "ats": "ashby",
+      "slug": "ramp",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 122
+    },
+    {
+      "name": "Redis",
+      "domain": "redis.com",
+      "ats": "ashby",
+      "slug": "redis",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 24
+    },
+    {
+      "name": "Remote",
+      "domain": "remote.com",
+      "ats": "greenhouse",
+      "slug": "remote",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 2
+    },
+    {
+      "name": "Render",
+      "domain": "render.com",
+      "ats": "ashby",
+      "slug": "render",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 34
+    },
+    {
+      "name": "Rubrik",
+      "domain": "rubrik.com",
+      "ats": "greenhouse",
+      "slug": "rubrik",
+      "regions": [
+        "india"
+      ],
+      "verified_jobs": 106
+    },
+    {
+      "name": "Sarvam AI",
+      "domain": "sarvam.ai",
+      "ats": "ashby",
+      "slug": "sarvam",
+      "regions": [
+        "india"
+      ],
+      "verified_jobs": 58
+    },
+    {
+      "name": "Scale AI",
+      "domain": "scale.com",
+      "ats": "greenhouse",
+      "slug": "scaleai",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 210
+    },
+    {
+      "name": "Sigmoid",
+      "domain": "sigmoid.com",
+      "ats": "greenhouse",
+      "slug": "sigmoid",
+      "regions": [
+        "india"
+      ],
+      "verified_jobs": 39
+    },
+    {
+      "name": "Slice",
+      "domain": "sliceit.com",
+      "ats": "greenhouse",
+      "slug": "slice",
+      "regions": [
+        "india"
+      ],
+      "verified_jobs": 45
+    },
+    {
+      "name": "Stripe",
+      "domain": "stripe.com",
+      "ats": "greenhouse",
+      "slug": "stripe",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 550
+    },
+    {
+      "name": "Supabase",
+      "domain": "supabase.com",
+      "ats": "ashby",
+      "slug": "supabase",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 58
+    },
+    {
+      "name": "Together AI",
+      "domain": "together.ai",
+      "ats": "greenhouse",
+      "slug": "togetherai",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 59
+    },
+    {
+      "name": "Turing",
+      "domain": "turing.com",
+      "ats": "greenhouse",
+      "slug": "turing",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 24
+    },
+    {
+      "name": "Twilio",
+      "domain": "twilio.com",
+      "ats": "greenhouse",
+      "slug": "twilio",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 172
+    },
+    {
+      "name": "Vercel",
+      "domain": "vercel.com",
+      "ats": "greenhouse",
+      "slug": "vercel",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 83
+    },
+    {
+      "name": "Weaviate",
+      "domain": "weaviate.io",
+      "ats": "ashby",
+      "slug": "weaviate",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 3
+    },
+    {
+      "name": "Zapier",
+      "domain": "zapier.com",
+      "ats": "ashby",
+      "slug": "zapier",
+      "regions": [
+        "remote-global"
+      ],
+      "verified_jobs": 11
+    }
+  ]
+}

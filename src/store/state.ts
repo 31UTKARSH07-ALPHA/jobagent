@@ -15,7 +15,9 @@ import { JobState, nowIso } from './schema.ts';
 /** Legal edges. A state whose array is empty is terminal. */
 export const TRANSITIONS: Readonly<Record<JobState, readonly JobState[]>> = {
   DISCOVERED: ['SCORED', 'EXPIRED'],
-  SCORED: ['MATCHED', 'REJECTED'],
+  // EXPIRED is reachable from every pre-draft state: a posting can vanish from its board
+  // at any point before we have written a draft about it.
+  SCORED: ['MATCHED', 'REJECTED', 'EXPIRED'],
   MATCHED: ['DRAFTED', 'NEEDS_CONTACT', 'EXPIRED'],
   // retried every 3 days, 3 attempts, then EXPIRED
   NEEDS_CONTACT: ['DRAFTED', 'EXPIRED'],
