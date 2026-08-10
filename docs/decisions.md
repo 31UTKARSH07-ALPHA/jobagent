@@ -301,3 +301,41 @@ place in Phase 3, which needs a long poll listening for approve/reject taps.
 **Revisit when.** Phase 2 puts drafts in the digest. If the message gets long enough to
 split routinely, that is the signal to shorten `reasoning` in the digest rather than raise
 the chunk limit.
+
+---
+
+## 015 — `@googleapis/gmail`, and the loopback OAuth flow
+
+**Decision.** Gmail access uses **`@googleapis/gmail`**, not the umbrella `googleapis`
+package. Authorisation is the **loopback** flow with **PKCE**: a throwaway HTTP server on a
+random `127.0.0.1` port receives the `?code=`, and `token.json` is written `0600`.
+
+**Why the per-API package.** `googleapis` installs every Google service — measured at
+**206MB**. `@googleapis/gmail` is **1.2MB** for the identical `gmail_v1` client and types.
+This project already defers `@huggingface/transformers` over ~500MB of ONNX runtime; paying
+200MB for six Gmail endpoints would be the same mistake with less to show for it.
+
+**Why loopback.** It is the only flow Google still supports for a desktop app. The
+copy-the-code-into-the-terminal flow (`urn:ietf:wg:oauth:2.0:oob`) was switched off in 2022,
+so any simpler-looking approach is a dead end. This is also why `credentials.json` lists
+`http://localhost` with no port: desktop clients may use any loopback port, so the server
+binds port 0 and lets the OS pick.
+
+PKCE despite the client having a secret, because a secret shipped inside a desktop app is not
+a secret — the code exchange is bound to a verifier only the running process knows. `state`
+is checked for the same reason: the loopback port is reachable by anything else on the laptop.
+
+**`prompt: 'consent'` is not optional.** Without it, a *second* authorisation returns no
+refresh token, and the pipeline silently gets a credential that dies in an hour. `authorize()`
+also refuses to write a token that has no `refresh_token` rather than storing one that cannot
+survive unattended.
+
+**The trap this cannot fix.** While the consent screen is in "Testing", Google expires the
+refresh token after **7 days** — a pipeline that worked all week fails with `invalid_grant` on
+day eight. `describeAuthError()` says exactly that, and names the fix, because the alternative
+is a future session debugging Google's consent model at 06:05. Publishing the consent screen
+is the real fix.
+
+**Revisit when.** Sending starts for real. If the weekly re-auth becomes annoying before
+then, publishing the consent screen (or a Workspace account on an own domain, already on the
+Phase-3-and-later list) removes it.

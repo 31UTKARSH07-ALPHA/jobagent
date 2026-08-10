@@ -14,7 +14,8 @@ Everything else lives in `docs/` and is read on demand.
   one file (decision 011 — supersedes 003, which used Anthropic and cost ~$7/mo)
 - **Zod** — `src/store/schema.ts` is the single source of truth for every shape
 - **`@huggingface/transformers`** — bge-small embeddings, local, free
-- **`googleapis`** — Gmail read/draft/send
+- **`@googleapis/gmail`** — Gmail read/draft/send. The per-API package: 1.2MB, versus
+  206MB for the umbrella `googleapis`. Same client (decision 015)
 - **Telegram** — plain `fetch` in `src/notify/telegram.ts`; sending is one POST. `grammy`
   arrives with Phase 3, which needs a long poll for approve/reject taps
 
@@ -29,6 +30,8 @@ node --test                       # tests
 node src/match/score.ts --job=12       # score one job, print it, write nothing
 node src/match/score.ts --distribution # the histogram the calibration gate reads
 node src/notify/telegram.ts --test     # prove the bot is wired up
+node src/gmail/auth.ts                 # authorise Gmail (opens a browser, once)
+node src/gmail/auth.ts --status        # which account, which scopes
 ```
 
 ## Invariants — violating these causes real-world damage
