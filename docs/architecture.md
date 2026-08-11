@@ -193,14 +193,24 @@ memory — same rule as ATS slugs (decision 010).
 ## Daily timeline
 
 ```
-06:00  ingest → prefilter → score → contacts → draft
-06:05  Telegram digest
+06:00  ingest → prefilter → score → contacts → draft → digest
+       └─ scoring is the long pole: ~67s per job (see below)
 09:00  sends begin, jittered 3–15 min apart, under the daily cap
        ├─ AUTO_SEND items fire on schedule
        └─ approved items join the queue as taps arrive
 */4h   tracker: replies, bounces, follow-ups due
 Sun    company-list refresh, prune dead ATS slugs
 ```
+
+**The digest does not arrive at a fixed time, and cannot.** Measured 2026-08-12: 9 jobs took
+**10m02s** — about 67 seconds each, because the free tier allows two ~4,000-token scoring calls
+per minute and the pacer waits for real headroom rather than being refused (decision 017). So a
+30-job morning finishes around 06:35 and the `MAX_SCORES_PER_RUN` ceiling of 60 around 07:10.
+
+That is fine for a digest read over breakfast, and the 09:00 send window is untouched. But it
+is the reason `src/match/embed.ts` — the bge-small prefilter, deferred while volume was five
+jobs a day — earns its keep as volume grows: it cuts the *number* of scoring calls, which is
+the only lever that shortens this materially. Trimming the prompt is the smaller lever.
 
 Sends are delayed to 09:00 and jittered on purpose. Five emails leaving the same domain
 in the same second is the most robotic signal available.

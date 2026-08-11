@@ -426,6 +426,16 @@ does not drift.
 wait rather than hanging — nothing can make it fit, so the 429 handler should see it. And the
 700ms floor stays, to stop two calls leaving in the same millisecond.
 
+**Measured after.** Re-scoring the same nine jobs: **9/9 succeeded, zero rate-limit failures**,
+in 10m02s — about 67s per job against roughly 30s before. That is the trade being made
+deliberately: the pacer converts failures into waiting. Two ~4,000-token calls per minute is the
+free tier's ceiling, so ~35 minutes for 30 jobs and ~67 for the `MAX_SCORES_PER_RUN` cap of 60.
+Recorded in `architecture.md`'s daily timeline, which previously claimed a 06:05 digest.
+
+This is also what makes the deferred bge-small prefilter worth building as volume grows: it is
+the only lever that reduces the *number* of scoring calls, and therefore the only one that
+shortens the run materially.
+
 **Revisit when.** A model's limit is seen to differ from `tpm` in a real error. `ASSUMED_TPM`
 is applied to the two models whose limits have never been observed; that is a guess, but a
 conservative one — too low costs throughput, too high costs a job.

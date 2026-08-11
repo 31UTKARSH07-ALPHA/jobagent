@@ -39,8 +39,12 @@ scopes readonly + compose + send. Telegram bot `@utkarsh_jobagent_bot`, token an
 note that Gmail's "Disable forwarding" radio only governs blanket forwarding, so a filter
 forwards regardless of what that radio says.
 
-9 jobs in the DB, 6 MATCHED / 3 REJECTED, 3 of them from Naukri alert email. Rubric is now
-**v3** — see the clamp note below for why v2's numbers should be ignored.
+9 jobs in the DB, 6 MATCHED / 3 REJECTED, 3 of them from Naukri alert email. All 9 carry a
+rubric **v3** score (`min 30, median 82, max 100`); ignore v1 and v2 rows, see below.
+
+**Throughput is now the interesting constraint:** ~67s per scored job, 9 jobs in 10m02s, since
+the pacer waits for token headroom instead of being refused (017). 30 jobs ≈ 35 min. The
+digest therefore arrives when scoring finishes, not at a fixed 06:05.
 
 **LinkedIn: alerts now exist, but no digest has arrived yet.** Utkarsh created job alerts on
 2026-08-12 and the "your job alert has been created" confirmation reached the mailbox — which
