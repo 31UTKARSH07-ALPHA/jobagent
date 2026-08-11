@@ -1,8 +1,9 @@
 # Phases
 
-> **Status: Phase 1 all but done. Ingest (boards + Naukri alert email) → score → Telegram
-> digest works end to end against real data. Left: a LinkedIn alert parser once such mail
-> actually arrives, and a launchd schedule so the whole thing runs without being asked.**
+> **Status: Phase 1 complete except the schedule. Ingest (51 boards + Naukri alert email) →
+> score → Telegram digest all work end to end against real data, and a real digest has landed
+> on Utkarsh's phone. Left: a launchd plist for the 06:00 run, and a LinkedIn parser once
+> LinkedIn's first real alert digest arrives.**
 > Update this header every time a phase completes. It is the first thing read each session.
 
 Ship each phase end-to-end before starting the next. A working Phase 1 already removes
@@ -60,10 +61,13 @@ A real digest has arrived — 3 matches, sent to Utkarsh's phone on 2026-08-10 �
 hand-run `--stage=digest`, not from a schedule. What is left for Phase 1:
 
 1. **A launchd plist for the 06:00 run.** The only thing between "works when run" and
-   "arrives each morning".
-2. **The LinkedIn alert parser**, once there is LinkedIn mail to write it against. Not a
-   guess-and-hope job: bulk-mail HTML written blind produces a parser that passes its own
-   tests and reads nothing.
+   "arrives each morning". Blocked on nothing technical; ask before installing a background
+   agent on his laptop.
+2. **The LinkedIn alert parser**, once there is a real LinkedIn *digest* to write it against.
+   Alerts were created 2026-08-12 and the "alert has been created" confirmation arrived, which
+   proves the alert and the forwarding filter both work — but a confirmation carries no job
+   listings. Watch `alert_unparsed` in `runs.stats.ingest`. Not a guess-and-hope job:
+   bulk-mail HTML written blind produces a parser that passes its own tests and reads nothing.
 
 ### Calibration gate — do not skip
 

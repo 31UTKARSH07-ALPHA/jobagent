@@ -21,13 +21,19 @@
 import { z } from 'zod';
 import type { LlmJob } from './models.ts';
 import { modelFor } from './models.ts';
+import { estimateTokens, windowFor } from './rate-limit.ts';
 
 const BASE_URL = process.env['GROQ_BASE_URL'] ?? 'https://api.groq.com/openai/v1';
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const DEFAULT_RETRIES = 3;
 
-/** Minimum gap between calls to one model, so a batch of scorings does not trip the limiter. */
+/**
+ * Minimum gap between calls to one model.
+ *
+ * A floor, not the actual pacing — the token budget in `./rate-limit.ts` does that work. This
+ * only stops two calls leaving in the same millisecond.
+ */
 const MIN_INTERVAL_MS = 700;
 
 /**
@@ -167,8 +173,22 @@ export async function chat(opts: ChatOptions): Promise<string> {
   /** Whether the previous attempt failed on JSON rather than on transport or rate limit. */
   let badGeneration = false;
 
+  // What Groq will charge for this request: the prompt, plus the output budget, whether or not
+  // the model uses it (decision 013).
+  const cost =
+    estimateTokens(messages.map((m) => m.content).join('\n')) + Number(body['max_tokens']);
+  const budget = windowFor(model.id, model.tpm);
+
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0) await sleep(backoffMs || 1000 * 2 ** (attempt - 1));
+
+    // Wait for room in the trailing minute rather than submitting and being refused. Loops
+    // because one expiring entry may not free enough on its own.
+    for (let waitMs = budget.waitMsFor(cost, Date.now()); waitMs > 0; waitMs = budget.waitMsFor(cost, Date.now())) {
+      await sleep(waitMs);
+    }
+
+    const reservation = budget.reserve(cost, Date.now());
     await pace(model.id);
 
     // Only after a JSON failure: a 429 says nothing about the sampling, so a rate-limited
@@ -189,6 +209,12 @@ export async function chat(opts: ChatOptions): Promise<string> {
       });
 
       const payload = (await res.json()) as GroqResponse;
+
+      // Replace the character-count estimate with what was actually charged, so a long batch
+      // does not drift. Absent on an error response, in which case the estimate stands.
+      if (payload.usage?.total_tokens !== undefined) {
+        budget.settle(reservation, payload.usage.total_tokens);
+      }
 
       if (!res.ok || payload.error) {
         const message = payload.error?.message ?? res.statusText;

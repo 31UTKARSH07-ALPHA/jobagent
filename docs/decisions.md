@@ -260,6 +260,9 @@ the prompt: `MAX_DESCRIPTION_CHARS` is ~1,500 of those 2,500 prompt tokens.
 directly reduces calls per minute. *Dropping to one call per minute to never 429* — halves
 throughput to avoid an error that is already handled correctly.
 
+**Superseded in part by 017**, which replaces the flat inter-call gap with an actual token
+budget. The measurements and the two retry fixes above still stand.
+
 **Revisit when.** Gmail-alert ingest lands and the daily queue jumps from 5 to dozens. If
 scoring starts dominating the run, trim the prompt before paying for a higher tier.
 
@@ -389,3 +392,40 @@ lesson was that prose the model agrees with is prose the model then ignores.
 **Revisit when.** Reply rates exist. If alert-sourced jobs convert far worse than ATS-sourced
 ones, the description gap is the first suspect — and the fix is a better title-only rubric or
 dropping those postings, not scraping.
+
+---
+
+## 017 — Pace by tokens, not by wall clock. Refines 013
+
+**Decision.** `src/llm/rate-limit.ts` keeps a per-model trailing-60-second token budget. Before
+a request, the client waits until `prompt + max_tokens` actually fits; the reservation is made
+*before* the call and reconciled afterwards against `usage.total_tokens`. Each model's limit is
+a field on `MODELS` (`tpm`), taken from an observed 429 rather than from documentation.
+
+**Why.** Decision 013 established the arithmetic — 8,000 TPM, ~4,000 tokens a scoring call,
+therefore two calls a minute — and then paced with a flat 700ms gap between calls, which knows
+nothing about token cost. So the third call in any minute was submitted into an exhausted
+window and refused.
+
+Measured across nine scorings on 2026-08-11: **two failed**. One of them by **19 tokens** —
+`Limit 8000, Used 4015, Requested 4004`. Retrying works (013), but the run still burns retries
+on a failure that was arithmetically certain in advance, and a job that exhausts its retries is
+simply lost until the next day. Waiting 200ms is strictly better than being refused.
+
+**Why reserve before the call.** Groq charges the request when it is submitted. Recording usage
+after the response would let a second call leave against a budget the first has already spent —
+which is precisely the bug being fixed, just moved.
+
+**Why an estimate at all.** No tokenizer: shipping one to size a budget is not worth the
+dependency, and the cost of being wrong is a 429 that is already handled. `chars / 3.5` errs
+high against the usual 4-chars-per-token rule, and erring high means waiting slightly too long
+rather than being refused. The response's real figure replaces the estimate, so a long batch
+does not drift.
+
+**Deliberately not fixed.** A request larger than the whole per-minute budget returns a zero
+wait rather than hanging — nothing can make it fit, so the 429 handler should see it. And the
+700ms floor stays, to stop two calls leaving in the same millisecond.
+
+**Revisit when.** A model's limit is seen to differ from `tpm` in a real error. `ASSUMED_TPM`
+is applied to the two models whose limits have never been observed; that is a guess, but a
+conservative one — too low costs throughput, too high costs a job.

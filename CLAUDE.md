@@ -58,6 +58,9 @@ node src/gmail/messages.ts --query="from:naukri.com" --links --full   # inspect 
   variance out; do not retry it away.
 - Groq model IDs are **verified against the live `/models` endpoint**, never hard-coded
   from memory. Its catalogue changes. Same rule that `data/companies.json` follows.
+- Groq charges `prompt + max_tokens` at submission against an 8,000/min budget, so pacing is
+  a token window (`src/llm/rate-limit.ts`), not a timer. Never raise `max_tokens` for
+  "headroom" — it is billed whether used or not (decisions 013, 017).
 - Sends are jittered 3–15 min apart starting 09:00. Never fire them all at pipeline time.
 - LinkedIn/Naukri are ingested by parsing *my own Gmail job-alert emails*, never scraped.
   Alert postings therefore have **no description** — the scorer judges them on title,

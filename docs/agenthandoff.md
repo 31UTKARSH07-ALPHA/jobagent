@@ -13,9 +13,9 @@ Do not restate architecture here. Point at `docs/architecture.md`.
 
 ## Now
 
-Phase 0 complete. Phase 1 is functionally done: **boards + Naukri alert email → score →
-Telegram digest**, all against real data. 126 tests green, `tsc --noEmit` clean, working tree
-clean, all pushed.
+Phase 0 complete. Phase 1 is done except the schedule: **51 boards + Naukri alert email →
+score → Telegram digest**, all against real data. 136 tests green, `tsc --noEmit` clean,
+working tree clean, all pushed.
 
 | Works today | Command |
 |---|---|
@@ -42,11 +42,12 @@ forwards regardless of what that radio says.
 9 jobs in the DB, 6 MATCHED / 3 REJECTED, 3 of them from Naukri alert email. Rubric is now
 **v3** — see the clamp note below for why v2's numbers should be ignored.
 
-**LinkedIn has sent nothing, ever.** Zero messages in 45 days, so there is no LinkedIn parser
-and writing one now would mean guessing at bulk-mail HTML. Utkarsh needs to confirm he has
-actual **job alerts created on LinkedIn** (Jobs → Job Alerts); a filter cannot forward mail
-that is never sent, and filters never act retroactively. Such mail is fetched and counted as
-`alert_unparsed` so the day it arrives is visible in `runs.stats`.
+**LinkedIn: alerts now exist, but no digest has arrived yet.** Utkarsh created job alerts on
+2026-08-12 and the "your job alert has been created" confirmation reached the mailbox — which
+proves both the alert and the forwarding filter work. A confirmation carries no job listings,
+so there is still nothing to write a parser against, and writing one blind means guessing at
+bulk-mail HTML. LinkedIn's first real digest arrives on its own daily schedule; watch
+`alert_unparsed` in `runs.stats.ingest`, then use the `messages.ts` CLI to get the payload.
 
 Not built yet: contacts, drafting, sending. `src/main.ts` still logs those stages as no-ops.
 
@@ -63,10 +64,15 @@ Things a fresh session would otherwise undo, all measured rather than assumed:
   The model now rates four factors 0–10 and `fitScore()` does the arithmetic, with two hard
   gates (`level_fit` or `location_fit` ≤ 1 caps the total at 30). Spread on the same
   posting fell to 86/77/86. `temperature: 0` alone did *not* fix it — Groq has no seed.
-- **The free tier is 8,000 tokens/min and Groq charges prompt + `max_tokens`.** That is two
-  scoring calls a minute, ~30s per job. Hence `MAX_SCORES_PER_RUN = 60`, and hence the 429
-  wait is parsed out of the error body. Do not raise `max_tokens` for "headroom" — it is
-  charged whether it is used or not.
+- **The free tier is 8,000 tokens/min and Groq charges prompt + `max_tokens`** at submission.
+  That is two scoring calls a minute, ~30s per job. Hence `MAX_SCORES_PER_RUN = 60`, and hence
+  the 429 wait is parsed out of the error body (013). Do not raise `max_tokens` for "headroom"
+  — it is charged whether it is used or not.
+- **Pacing is a token budget, not a timer** (017). `src/llm/rate-limit.ts` holds a per-model
+  trailing-60s budget and waits for real headroom. The flat 700ms gap it replaced knew nothing
+  about token cost and lost 2 of 9 jobs on 2026-08-11, one of them by *19 tokens*. The
+  reservation is taken **before** the call because Groq charges at submission; moving it after
+  the response reintroduces the bug.
 - **The digest is silent when nothing matched, and that is deliberate** (014). It is also
   HTML rather than MarkdownV2, because job titles are full of the fifteen characters
   MarkdownV2 makes you escape. Do not "add a daily status ping" here — a dead cron is the
@@ -96,36 +102,42 @@ Full reasoning in `docs/decisions.md` 010.
 
 ## Blocked on Utkarsh
 
-Every credential is in place — resume, Groq key, Telegram bot, Gmail OAuth (authorised
-2026-08-11). Two things only he can settle:
+**Nothing outstanding.** Every credential is in place, and on 2026-08-12 Utkarsh reported
+doing all three of his remaining setup steps: LinkedIn job alerts created (confirmed — the
+confirmation email arrived), OAuth consent screen published, and the Gmail display name set.
 
-1. **Create job alerts on LinkedIn** (Jobs → Job Alerts), or confirm that he has. LinkedIn has
-   sent nothing in 45 days, and no forwarding filter can forward mail that is never sent. Until
-   then there is no LinkedIn parser, because there is nothing to write one against.
-2. **Decide whether to publish the OAuth consent screen.** In Testing mode the refresh token
-   expires every 7 days, which an unattended 06:00 run cannot survive. Publishing removes it;
-   the alternative is re-running `node src/gmail/auth.ts` weekly.
+One thing to verify rather than assume: whether publishing the consent screen actually took.
+`gmail.readonly` is a *restricted* scope, so Google may have held the app unverified. If a run
+ever fails with `invalid_grant`, the 7-day Testing expiry is still in force and the fix is
+either re-running `node src/gmail/auth.ts` weekly or a Workspace account on an own domain
+(already on the later-phases list for deliverability anyway).
 
 *(Target geography is settled — decision 009.)*
 
 ## Next action
 
 **A launchd plist for the 06:00 run.** Everything works when run by hand; nothing runs on its
-own. That is the last thing standing between Phase 1 and "a digest arrives each morning", and
-it is the thing Utkarsh actually asked for. He has *not* been asked whether he wants a
-background agent installed on this laptop — ask first.
+own. That is the last thing between Phase 1 and "a digest arrives each morning". Two plists
+eventually (daily pipeline, and the 4-hourly tracker in Phase 3), but only the daily one is
+needed now: `ingest → score → digest`.
 
-The token expiry matters here: the consent screen is in **Testing**, so the refresh token dies
-every 7 days and an unattended 06:00 run will fail with `invalid_grant` (explained in full by
-`describeAuthError`). Either publish the consent screen or expect to re-run
-`node src/gmail/auth.ts` weekly. Worth resolving *before* trusting a schedule.
+Utkarsh said on 2026-08-12 he had done his three setup steps and told this session to carry on,
+which covers the schedule — but **confirm before `launchctl bootstrap`** all the same, and
+document the `bootout` command next to it. A background agent on someone's laptop should never
+be a surprise.
+
+Things a plist here gets wrong if written from memory: `launchd` runs with a near-empty
+environment, so it needs the absolute `node` path and an explicit `WorkingDirectory`, and
+`--env-file-if-exists=.env` only resolves relative to that directory. Send stdout/stderr to a
+log file under the project, and prefer `StartCalendarInterval` over `StartInterval` so a closed
+laptop catches up rather than drifting.
 
 Then, in order of value:
 
-- **The LinkedIn parser** — but only once real LinkedIn mail exists. Watch `alert_unparsed` in
-  `runs.stats.ingest`; when it is non-zero, `node src/gmail/messages.ts --query="from:linkedin.com"
-  --links --full` gives the payload to write it against. Add it to `PARSERS` in
-  `src/ingest/gmail-alerts.ts` — one entry, nothing else changes.
+- **The LinkedIn parser** — only once a real LinkedIn *digest* exists, not just the
+  confirmation email. Watch `alert_unparsed` in `runs.stats.ingest`; when non-zero,
+  `node src/gmail/messages.ts --query="from:linkedin.com" --links --full` gives the payload.
+  Add one entry to `PARSERS` in `src/ingest/gmail-alerts.ts` — nothing else changes.
 - Let scoring run 3 days, then `--distribution` and set the thresholds for real
   (decision 008). **Split the numbers by source** — ATS postings have a full JD and alert
   postings have none, so one threshold across both compares unlike things.
