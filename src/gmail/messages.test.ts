@@ -71,10 +71,31 @@ test('bodies decode as base64url, not base64', () => {
 });
 
 test('a multipart/alternative message yields both bodies', () => {
-  const msg = alternative('Plain body', '<p>HTML body</p>');
+  const msg = alternative(
+    'Plain body, and a real one — long enough to beat its own markup.',
+    '<p>HTML body</p>',
+  );
   const { text, html } = bodyOf(msg.payload);
-  assert.equal(text, 'Plain body', 'text/plain is preferred when present');
+  assert.match(text, /^Plain body/, 'a genuine text/plain part is used as-is');
   assert.equal(html, '<p>HTML body</p>');
+});
+
+test('a stub text/plain part loses to the HTML that holds the actual jobs', () => {
+  // The exact shape of a real Naukri Campus alert (2026-08-11): the declared plain-text part
+  // is a one-line stub, and all three postings are in the markup. Preferring text/plain here
+  // reads the email as empty and reports no jobs, silently, forever.
+  const msg = alternative(
+    'Job recommendations based on your Naukri.com profile',
+    '<a href="https://www.naukri.com/jd/job-listings-sde-intern-acme-bengaluru-0-to-1-years-1">' +
+      'Software Development Intern (Full Stack)</a><p>Discover Dollar Tec...</p>' +
+      '<p>Internship</p><a href="https://www.naukri.com/jd/job-listings-ml-intern-beta-pune-0-to-2-years-2">' +
+      'Python / AI-ML Intern</a><p>Lakkshions It</p>',
+  );
+
+  const { text } = bodyOf(msg.payload);
+  assert.match(text, /Software Development Intern/, 'the HTML won');
+  assert.match(text, /Python \/ AI-ML Intern/);
+  assert.equal(text.includes('Job recommendations based on'), false, 'the stub was discarded');
 });
 
 test('an HTML-only message still produces readable text', () => {

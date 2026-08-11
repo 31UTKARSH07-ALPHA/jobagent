@@ -8,9 +8,10 @@ import type { StageContext } from '../stage.ts';
 import { upsertCompany } from '../store/companies.ts';
 import { staleJobIds, upsertJob } from '../store/jobs.ts';
 import { tryTransition, stateOf } from '../store/state.ts';
-import { transaction } from '../store/db.ts';
-import { loadCompanies, SEED_PATH } from './companies.ts';
+import { transaction, type Db } from '../store/db.ts';
+import { loadCompanies, SEED_PATH, type SeedCompany } from './companies.ts';
 import { atsSources } from './ats.ts';
+import { gmailAlertSource } from './gmail-alerts.ts';
 import type { JobSource } from './types.ts';
 
 /**
@@ -28,25 +29,31 @@ export const STALE_AFTER_DAYS = 14;
 /** Rows written per transaction. Batched so a crash costs at most this many. */
 const BATCH_SIZE = 50;
 
-export function sources(): JobSource[] {
-  return atsSources(loadCompanies());
+/**
+ * Every source, in the order they are polled.
+ *
+ * The Gmail source takes the DB because it is the only adapter that receives a company *name*
+ * rather than a board it already knows the owner of — see `AlertPosting` in `./types.ts`.
+ */
+export function sources(db: Db): JobSource[] {
+  return [...atsSources(loadCompanies()), gmailAlertSource({ db })];
 }
 
 export async function runIngest(ctx: StageContext): Promise<void> {
-  let companies;
+  let companies: SeedCompany[] = [];
   try {
     companies = loadCompanies();
   } catch (err) {
-    // Not fatal to the run — the other stages still have yesterday's rows to work on.
+    // Not fatal, and no longer a reason to stop: alert email needs no seed list, and it is
+    // where the companies that have no board at all come from (decision 010).
     ctx.log(
       `no usable seed list at ${SEED_PATH} (${err instanceof Error ? err.message : String(err)}). ` +
-        'Run: node src/ingest/refresh-companies.ts',
+        'Run: node src/ingest/refresh-companies.ts — continuing with alert email only.',
     );
-    return;
   }
 
-  const all = atsSources(companies);
-  ctx.log(`${companies.length} companies across ${all.length} boards`);
+  const all = [...atsSources(companies), gmailAlertSource({ db: ctx.db })];
+  ctx.log(`${companies.length} companies across ${all.length - 1} boards, plus alert email`);
 
   const since = new Date(Date.now() - INGEST_WINDOW_DAYS * 86_400_000);
   const pending: { companyId: number; raw: Parameters<typeof upsertJob>[2] }[] = [];

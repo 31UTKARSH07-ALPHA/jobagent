@@ -13,7 +13,7 @@
  */
 import type { StageContext } from '../stage.ts';
 import { markDigested, pendingDigestItems, type DigestItem } from '../store/digest.ts';
-import { PROMPT_VERSION, factorLine } from '../match/score.ts';
+import { factorLine } from '../match/score.ts';
 import { escapeHtml, sendMessage, telegramConfig, type TelegramConfig } from './telegram.ts';
 
 /**
@@ -83,7 +83,7 @@ export async function runDigest(ctx: StageContext, deps: DigestDeps = {}): Promi
     config = found.config;
   }
 
-  const all = pendingDigestItems(ctx.db, PROMPT_VERSION);
+  const all = pendingDigestItems(ctx.db);
   if (all.length === 0) {
     // Deliberately silent. A daily "nothing today" trains you to ignore the bot, and it
     // would break idempotency — a second run in the same morning would send it again.

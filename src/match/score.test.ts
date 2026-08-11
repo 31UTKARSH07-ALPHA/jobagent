@@ -16,7 +16,10 @@ import {
   MATCH_THRESHOLD,
   MAX_SCORES_PER_RUN,
   PROMPT_VERSION,
+  TITLE_ONLY_CAP,
+  clampToEvidence,
   fitScore,
+  isTitleOnly,
   jobForPrompt,
   profileForPrompt,
   runScore,
@@ -97,7 +100,13 @@ function context(db: Db): StageContext & { counts: Record<string, number> } {
   };
 }
 
-function seed(db: Db, titles: string[]): number[] {
+/** Long enough to count as evidence, so the title-only clamp does not apply (decision 016). */
+const REAL_JD =
+  'We are looking for an intern to work on our Python backend services. You will build APIs, ' +
+  'work with PostgreSQL and Redis, and help ship features to production. Familiarity with ' +
+  'distributed systems is a plus. This is a paid internship based in our Bengaluru office.';
+
+function seed(db: Db, titles: string[], description = REAL_JD): number[] {
   const companyId = upsertCompany(db, { name: 'Acme', domain: 'acme.com' });
   return titles.map(
     (title, i) =>
@@ -111,7 +120,7 @@ function seed(db: Db, titles: string[]): number[] {
           url: `https://acme.com/jobs/${i}`,
           title,
           location: 'Bengaluru, India',
-          description: 'Build things with Python.',
+          description,
         }),
       ).id,
   );
@@ -310,5 +319,54 @@ test('a long JD is truncated and an empty one still gets a usable prompt', () =>
   const empty = jobForPrompt({ ...job, description: '', location: '' }, 'Acme');
   assert.match(empty, /no description/);
   assert.match(empty, /not stated/, 'a missing location is stated as missing, not left blank');
+  db.close();
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Evidence — a posting with no description cannot earn a top score (decision 016)
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('a description-free posting is recognised as title-only', () => {
+  assert.equal(isTitleOnly({ description: '' }), true, 'alert-email postings, by construction');
+  assert.equal(isTitleOnly({ description: '   \n  ' }), true, 'whitespace is not evidence');
+  assert.equal(isTitleOnly({ description: 'Backend intern. Apply now.' }), true, 'a stub is not either');
+  assert.equal(isTitleOnly({ description: REAL_JD }), false);
+});
+
+test('the clamp holds down only the two factors a title cannot evidence', () => {
+  const perfect = judgement();
+  const clamped = clampToEvidence(perfect, true);
+
+  assert.equal(clamped.stack_fit, TITLE_ONLY_CAP);
+  assert.equal(clamped.domain_fit, TITLE_ONLY_CAP);
+  // Level and location *are* knowable from a title and a city, so they are untouched.
+  assert.equal(clamped.level_fit, 10);
+  assert.equal(clamped.location_fit, 10);
+  // A modest rating is left alone rather than raised to the cap.
+  assert.equal(clampToEvidence(judgement({ stack_fit: 2 }), true).stack_fit, 2);
+  assert.deepEqual(clampToEvidence(perfect, false), perfect, 'a real JD is not clamped');
+});
+
+test('a title-only posting can be MATCHED but can never reach the auto-send band', () => {
+  // The measured failure this exists for: on 2026-08-11 all three Naukri postings came back
+  // 10/10/10/10 → 100, the same score Stripe got with a full JD backing it up.
+  const best = fitScore(clampToEvidence(judgement(), true));
+  assert.equal(best, 82, 'the ceiling for a posting nobody has read');
+  assert.ok(best >= MATCH_THRESHOLD, 'still worth putting in the digest');
+  assert.ok(best < 85, 'but never auto-sendable — Phase 3 requires >85');
+});
+
+test('the stage clamps a real alert-shaped job and counts it', async () => {
+  const db = openDb(':memory:');
+  seed(db, ['Python / AI-ML / Full Stack Developer Intern'], '');
+
+  const scorer = fakeScorer(() => judgement()); // the model says 10/10/10/10
+  const ctx = context(db);
+  await runScore(ctx, { scorer, profile: PROFILE });
+
+  const score = getScore(db, jobIdsInState(db, 'MATCHED')[0] ?? 1, PROMPT_VERSION);
+  assert.equal(score?.stack_fit, TITLE_ONLY_CAP, 'stored clamped, so fit_score matches its factors');
+  assert.equal(score?.fit_score, 82);
+  assert.equal(ctx.counts['title_only'], 1);
   db.close();
 });

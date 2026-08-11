@@ -339,3 +339,53 @@ is the real fix.
 **Revisit when.** Sending starts for real. If the weekly re-auth becomes annoying before
 then, publishing the consent screen (or a Workspace account on an own domain, already on the
 Phase-3-and-later list) removes it.
+
+---
+
+## 016 — Alert emails carry no job description, and that is accepted
+
+**Decision.** Postings from Gmail alerts are stored with `description = ''`. The posting page
+is **not** fetched. Everything else — title, company, location, posting id — is parsed out of
+the URL slug rather than the visible email text.
+
+**Why no description.** Fetching `naukri.com/jd/...` for each posting is precisely the
+scraping that decision 004 rules out; the ban risk is the reason that decision exists, and it
+does not stop applying because the request is convenient. So the scorer sees a title, a company
+and a location, and its prompt already handles that case explicitly.
+
+**What it costs, stated plainly.** `stack_fit` and `domain_fit` (decision 012) are judged from
+the title alone. "Python / AI-ML / Full Stack Developer Intern" carries real signal;
+"Software Development Intern" carries much less. Expect alert-sourced jobs to cluster nearer
+the middle of the distribution than ATS-sourced ones, which arrive with a full JD. When the
+calibration gate runs, **compare the two sources separately** — a single threshold across both
+is comparing a rubric applied to two different amounts of evidence.
+
+**Why the URL and not the email text.** Measured on the real mail: the rendered email truncates
+the company to "Discover Dollar Tec…", while the slug spells out
+`discover-dollar-technologies-pvt-ltd`. The slug is structured — title, company, city,
+experience band, id — and the anchor text gives the exact title, so the title's slug can be
+*subtracted* from the front instead of guessing where it ends. The remaining
+company/city boundary is resolved by matching a known city at the end, never by guessing.
+
+**Consequence to plan for.** Naukri's postings are mostly small companies, so
+`resolveCompany` returns `.unknown.invalid` for nearly all of them — 3 of 3 on the first real
+run. That is correct (better an honest marker than a wrong domain) but it means Phase 2's
+contact cascade has to be able to *find* a domain from a company name, not just assume one
+exists. That is now the cascade's first job, not an afterthought.
+
+**What this actually cost, measured the same day.** The first run with Naukri postings scored
+all three at **10/10/10/10 → 100** — the same number Stripe's internship got with a full JD
+backing it up. Not generosity: with only "Python / AI-ML / Full Stack Developer Intern" to go
+on, there is nothing to deduct against, so nothing is deducted. The score quietly stopped
+meaning "good fit" and started meaning "the title sounds like me", and 100 is deep inside the
+band Phase 3 would auto-send from.
+
+So `clampToEvidence()` holds `stack_fit` and `domain_fit` to **6** when the description is
+under 200 characters. A title-only posting now tops out at **82**: comfortably MATCHED, and
+permanently below the 85 an auto-send requires. *A posting nobody has read cannot mail
+itself.* The prompt says the same thing, but the clamp is what enforces it — decision 012's
+lesson was that prose the model agrees with is prose the model then ignores.
+
+**Revisit when.** Reply rates exist. If alert-sourced jobs convert far worse than ATS-sourced
+ones, the description gap is the first suspect — and the fix is a better title-only rubric or
+dropping those postings, not scraping.

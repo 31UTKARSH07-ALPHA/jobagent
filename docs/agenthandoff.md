@@ -13,8 +13,8 @@ Do not restate architecture here. Point at `docs/architecture.md`.
 
 ## Now
 
-Phase 0 complete. Phase 1: ingest → score → **Telegram digest** works for real, and a real
-digest has landed on Utkarsh's phone. 72 tests green, `tsc --noEmit` clean, working tree
+Phase 0 complete. Phase 1 is functionally done: **boards + Naukri alert email → score →
+Telegram digest**, all against real data. 126 tests green, `tsc --noEmit` clean, working tree
 clean, all pushed.
 
 | Works today | Command |
@@ -28,29 +28,35 @@ clean, all pushed.
 | **Send the morning digest** | `node src/main.ts --stage=digest` |
 | **Preview it without sending** | `node src/main.ts --stage=digest --dry-run` |
 | **Prove the bot works** | `node src/notify/telegram.ts --test` |
+| **Gmail status** | `node src/gmail/auth.ts --status` |
+| **Inspect real alert mail** | `node src/gmail/messages.ts --query="from:naukri.com" --links --full` |
+| **Re-score after a rubric bump** | `node src/match/score.ts --rescore` |
 | Any model call | `complete()` / `chat()` in `src/llm/groq.ts` |
 
-All 5 DISCOVERED rows are now scored under rubric v2: **100, 86, 76, 46, 30** → 3 MATCHED,
-2 REJECTED. Sane at both ends — Stripe's SWE intern is the 100; a Linux *kernel* role got
-stack 0 / domain 0 and a Cloudflare intern role that is onsite in Austin got location 0.
+**Gmail is live.** Authorised as `3107utkarshpathak@gmail.com` (`token.json`, mode 600),
+scopes readonly + compose + send. Telegram bot `@utkarsh_jobagent_bot`, token and chat id in
+`.env`. Utkarsh forwards LinkedIn and Naukri mail into that mailbox with Gmail *filters* —
+note that Gmail's "Disable forwarding" radio only governs blanket forwarding, so a filter
+forwards regardless of what that radio says.
 
-Telegram is fully wired: bot `@utkarsh_jobagent_bot`, token and `TELEGRAM_CHAT_ID` both in
-`.env`. `credentials.json` for Gmail is in the project root (Desktop-app client, project
-`jobagent-505021`) but **no OAuth code exists yet and `token.json` has never been written**.
+9 jobs in the DB, 6 MATCHED / 3 REJECTED, 3 of them from Naukri alert email. Rubric is now
+**v3** — see the clamp note below for why v2's numbers should be ignored.
 
-Not built yet: contacts, drafting, sending, Gmail-alert ingest. `src/main.ts` still logs
-those stages as no-ops.
+**LinkedIn has sent nothing, ever.** Zero messages in 45 days, so there is no LinkedIn parser
+and writing one now would mean guessing at bulk-mail HTML. Utkarsh needs to confirm he has
+actual **job alerts created on LinkedIn** (Jobs → Job Alerts); a filter cannot forward mail
+that is never sent, and filters never act retroactively. Such mail is fetched and counted as
+`alert_unparsed` so the day it arrives is visible in `runs.stats`.
 
-**The number that still matters: 4,710 postings seen → 5 kept.** The ATS pollers alone will
-never fill a daily digest. See the coverage note below.
+Not built yet: contacts, drafting, sending. `src/main.ts` still logs those stages as no-ops.
 
 ## In flight
 
 Nothing. Clean tree, no partial work.
 
-## Read decisions 012, 013 and 014 before touching the scorer or the digest
+## Read decisions 012–016 before touching the scorer, the digest or the parsers
 
-Three things a fresh session would otherwise undo, all measured on 2026-08-10:
+Things a fresh session would otherwise undo, all measured rather than assumed:
 
 - **Never ask a model for a 0–100 score.** Asked directly, the same posting came back 55,
   78, 90 and 92 — and `REJECTED` is terminal, so a bad roll silently discards a good job.
@@ -65,6 +71,18 @@ Three things a fresh session would otherwise undo, all measured on 2026-08-10:
   HTML rather than MarkdownV2, because job titles are full of the fifteen characters
   MarkdownV2 makes you escape. Do not "add a daily status ping" here — a dead cron is the
   launchd layer's problem, and a usually-empty message is one you stop reading.
+- **A posting with no description is clamped to 82 max** (016). Alert emails carry no JD, and
+  on the first real run all three Naukri jobs came back 10/10/10/10 → 100, tying Stripe's
+  internship, which had a full JD confirming the match. With nothing to deduct against,
+  nothing gets deducted. `clampToEvidence()` holds `stack_fit`/`domain_fit` to 6, which caps
+  the total below the 85 Phase 3 needs to auto-send: a posting nobody has read cannot mail
+  itself. Do not remove the clamp to "let good jobs score higher".
+- **Naukri's parser reads the URL slug, not the visible text** (016) — the rendered email
+  truncates the company to "Discover Dollar Tec…". Re-verify with the `messages.ts` CLI above
+  if it ever returns nothing; the failure mode is silence, not an error.
+- **The digest takes each job's newest score, never a pinned `PROMPT_VERSION`.** Pinning
+  looked tidier and dropped already-matched-but-unreported jobs from the digest forever on
+  the first rubric bump.
 
 ## Coverage problem worth understanding before building more
 
@@ -78,29 +96,43 @@ Full reasoning in `docs/decisions.md` 010.
 
 ## Blocked on Utkarsh
 
-**Nothing.** Resume, Groq key, Telegram bot and `credentials.json` are all in place as of
-2026-08-10. The only thing he still has to do is click through one OAuth consent screen when
-the Gmail flow is written — and that cannot happen before the code exists.
+Every credential is in place — resume, Groq key, Telegram bot, Gmail OAuth (authorised
+2026-08-11). Two things only he can settle:
+
+1. **Create job alerts on LinkedIn** (Jobs → Job Alerts), or confirm that he has. LinkedIn has
+   sent nothing in 45 days, and no forwarding filter can forward mail that is never sent. Until
+   then there is no LinkedIn parser, because there is nothing to write one against.
+2. **Decide whether to publish the OAuth consent screen.** In Testing mode the refresh token
+   expires every 7 days, which an unattended 06:00 run cannot survive. Publishing removes it;
+   the alternative is re-running `node src/gmail/auth.ts` weekly.
 
 *(Target geography is settled — decision 009.)*
 
 ## Next action
 
-**Gmail OAuth, then `src/ingest/gmail-alerts.ts`.** `credentials.json` is already in place,
-so the remaining work is code plus one browser approval: an installed-app OAuth flow writing
-`token.json`, then a `JobSource` that parses LinkedIn and Naukri alert emails. This is the
-real unlock — see the coverage note. Scopes: `gmail.readonly`, `gmail.compose`, `gmail.send`.
+**A launchd plist for the 06:00 run.** Everything works when run by hand; nothing runs on its
+own. That is the last thing standing between Phase 1 and "a digest arrives each morning", and
+it is the thing Utkarsh actually asked for. He has *not* been asked whether he wants a
+background agent installed on this laptop — ask first.
 
-Worth knowing before it bites: the consent screen is in **Testing** mode, so its refresh
-token expires after 7 days. Either publish the app or plan on re-approving weekly.
+The token expiry matters here: the consent screen is in **Testing**, so the refresh token dies
+every 7 days and an unattended 06:00 run will fail with `invalid_grant` (explained in full by
+`describeAuthError`). Either publish the consent screen or expect to re-run
+`node src/gmail/auth.ts` weekly. Worth resolving *before* trusting a schedule.
 
 Then, in order of value:
 
-- **A launchd plist for the 06:00 run** — the last thing between "works when run" and
-  "arrives each morning". Not yet written; Utkarsh has not been asked whether he wants a
-  background agent installed.
+- **The LinkedIn parser** — but only once real LinkedIn mail exists. Watch `alert_unparsed` in
+  `runs.stats.ingest`; when it is non-zero, `node src/gmail/messages.ts --query="from:linkedin.com"
+  --links --full` gives the payload to write it against. Add it to `PARSERS` in
+  `src/ingest/gmail-alerts.ts` — one entry, nothing else changes.
 - Let scoring run 3 days, then `--distribution` and set the thresholds for real
-  (decision 008). With 5 scores the histogram means nothing yet.
+  (decision 008). **Split the numbers by source** — ATS postings have a full JD and alert
+  postings have none, so one threshold across both compares unlike things.
+- Phase 2's contact cascade has a new first job: `resolveCompany` returns
+  `.unknown.invalid` for nearly every Naukri company (3 of 3 on the first run), because they
+  are small firms absent from `candidates.ts`. The cascade must *find* a domain from a name,
+  not assume one exists.
 
 Deliberately deferred:
 - `src/match/embed.ts` — bge-small prefilter. At 5 jobs/day scoring everything is cheaper
@@ -126,7 +158,11 @@ written, not before.
 - `data/jobagent.db` had its 5 jobs reset to `DISCOVERED` by hand once, on 2026-08-10, so
   they could be re-scored under rubric v2 after migration 002 discarded the v1 scores.
   `REJECTED` is terminal, so the state machine has no path back — that was a one-off dev
-  reset, not something any stage may do.
+  reset, not something any stage may do. **`--rescore` now exists so that never needs doing
+  again**: it writes a score at the current `PROMPT_VERSION` for any job missing one, without
+  touching state, and prints the jobs whose state no longer agrees with their score.
+- v1 and v2 score rows are in the DB and should be ignored for calibration. v1 was scored at
+  temperature 1.0 (decision 012); v2 predates the title-only clamp (016).
 
 ## Open questions not yet settled
 

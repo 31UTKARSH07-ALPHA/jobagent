@@ -1,8 +1,8 @@
 # Phases
 
-> **Status: Phase 1 nearly done. Ingest → score → Telegram digest works end to end, and a
-> real digest has landed on Utkarsh's phone. Left: Gmail-alert ingest (where Indian coverage
-> has to come from) and a launchd schedule so it runs without being asked.**
+> **Status: Phase 1 all but done. Ingest (boards + Naukri alert email) → score → Telegram
+> digest works end to end against real data. Left: a LinkedIn alert parser once such mail
+> actually arrives, and a launchd schedule so the whole thing runs without being asked.**
 > Update this header every time a phase completes. It is the first thing read each session.
 
 Ship each phase end-to-end before starting the next. A working Phase 1 already removes
@@ -35,10 +35,14 @@ yet. This alone replaces the manual searching.
 - [x] `src/ingest/ats.ts` — Greenhouse, Lever, Ashby, Workable pollers
 - [x] `data/companies.json` — generated and verified by `src/ingest/refresh-companies.ts`,
       not hand-written (decision 010). Add companies in `src/ingest/candidates.ts`.
-- [ ] Gmail OAuth flow → `token.json` **(needs Utkarsh in a browser, ~10 min)**
-- [ ] `src/ingest/gmail-alerts.ts` — parse LinkedIn + Naukri alert emails
-      **← higher priority than it looks: the big Indian companies are not on any
-      supported ATS, so this is where Indian coverage actually comes from (decision 010)**
+- [x] Gmail OAuth flow → `token.json` — `src/gmail/auth.ts`, loopback + PKCE (decision 015)
+- [x] `src/gmail/messages.ts` — search, MIME flattening, link extraction
+- [x] `src/ingest/gmail-alerts.ts` — alert emails as a `JobSource`. **Naukri parses**
+      (`src/ingest/naukri-alert.ts`, written against real mail). **LinkedIn does not yet
+      exist** — no LinkedIn alert has ever arrived in the mailbox to write it against;
+      such mail is fetched and counted as `alert_unparsed` so its arrival is visible
+- [x] `src/ingest/resolve-company.ts` — company name → domain, for sources that only
+      give a display name
 - [x] `src/match/profile.ts` — resume PDF → typed profile (`unpdf` + Groq)
 - [ ] `src/match/embed.ts` — bge-small + cosine prefilter
 - [x] `src/llm/` — Groq client + one interface per job (decision 011)
@@ -53,14 +57,23 @@ yet. This alone replaces the manual searching.
 **Done when:** a real Telegram digest arrives from a real cron run.
 
 A real digest has arrived — 3 matches, sent to Utkarsh's phone on 2026-08-10 — but from a
-hand-run `--stage=digest`, not from a schedule. What is left for Phase 1: Gmail-alert ingest
-(the coverage problem, decision 010) and a launchd plist for the 06:00 run.
+hand-run `--stage=digest`, not from a schedule. What is left for Phase 1:
+
+1. **A launchd plist for the 06:00 run.** The only thing between "works when run" and
+   "arrives each morning".
+2. **The LinkedIn alert parser**, once there is LinkedIn mail to write it against. Not a
+   guess-and-hope job: bulk-mail HTML written blind produces a parser that passes its own
+   tests and reads nothing.
 
 ### Calibration gate — do not skip
 
 Run **scoring only for 3 days**, then look at the actual score distribution before
 setting thresholds: `node src/match/score.ts --distribution`. The `70` / `85` values are
 guesses. Record the real numbers in `decisions.md` when you set them.
+
+**Split the distribution by source.** ATS postings arrive with a full job description; alert
+postings arrive with a title and nothing else (decision 016), so the same rubric is working
+from two very different amounts of evidence. One threshold across both compares unlike things.
 
 Two knobs, not one. If the distribution is wrong-shaped rather than merely shifted, the
 factor weights in `src/match/score.ts` are the thing to change, not `MATCH_THRESHOLD` —

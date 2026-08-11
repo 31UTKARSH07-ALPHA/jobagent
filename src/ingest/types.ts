@@ -22,6 +22,25 @@ export interface JobSource {
   fetch(since: Date, ctx?: SourceContext): AsyncIterable<RawJob>;
 }
 
+/**
+ * What an alert-email parser yields.
+ *
+ * Not a `RawJob` yet: a name is not a domain, and turning "Razorpay Software Private Limited"
+ * into `razorpay.com` needs the DB (`./resolve-company.ts`). Adapters do not touch the store,
+ * so the company arrives as a name and the source layer resolves it.
+ *
+ * A format-specific parser may return more than this — Naukri's slugs also carry an experience
+ * band — but only these fields are required of all of them.
+ */
+export type AlertPosting = {
+  title: string;
+  company: string;
+  location: string;
+  url: string;
+  /** The posting's id at its source. Alert emails link the same job two or three times. */
+  sourceId: string;
+};
+
 export type SourceContext = {
   /** Non-fatal problems: one dead board, one unparseable posting. */
   onError?: (message: string) => void;

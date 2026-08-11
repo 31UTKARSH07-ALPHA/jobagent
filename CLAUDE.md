@@ -29,9 +29,11 @@ node --test                       # tests
 
 node src/match/score.ts --job=12       # score one job, print it, write nothing
 node src/match/score.ts --distribution # the histogram the calibration gate reads
+node src/match/score.ts --rescore      # re-score at the current PROMPT_VERSION, no state change
 node src/notify/telegram.ts --test     # prove the bot is wired up
 node src/gmail/auth.ts                 # authorise Gmail (opens a browser, once)
 node src/gmail/auth.ts --status        # which account, which scopes
+node src/gmail/messages.ts --query="from:naukri.com" --links --full   # inspect real mail
 ```
 
 ## Invariants — violating these causes real-world damage
@@ -58,6 +60,9 @@ node src/gmail/auth.ts --status        # which account, which scopes
   from memory. Its catalogue changes. Same rule that `data/companies.json` follows.
 - Sends are jittered 3–15 min apart starting 09:00. Never fire them all at pipeline time.
 - LinkedIn/Naukri are ingested by parsing *my own Gmail job-alert emails*, never scraped.
+  Alert postings therefore have **no description** — the scorer judges them on title,
+  company and location alone (decision 016). Naukri's parser reads the URL *slug*, not the
+  visible text, which truncates the company name.
 - Contacts are cached per **company**, not per job. Assume the cache is warm.
 
 ## Docs

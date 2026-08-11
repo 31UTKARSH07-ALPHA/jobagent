@@ -63,23 +63,31 @@ export const decodeBody = (data: string | null | undefined): string =>
  * Alert mail is usually `multipart/alternative` with both; some senders ship HTML only. The
  * first part of each type wins — later same-type parts in these emails are footers and
  * tracking pixels, not more content.
+ *
+ * **`text/plain` does not automatically win.** Measured against a real Naukri Campus alert on
+ * 2026-08-11: its `text/plain` part is the 54-character stub "Job recommendations based on
+ * your Naukri.com profile" while all three job listings live in 45KB of HTML. Preferring the
+ * declared plain-text part would have read that email as empty and reported no jobs, forever,
+ * with nothing in the logs to show why. So both are rendered and the longer one wins — a
+ * genuine plain-text body always beats its own markup, and a stub never beats real content.
  */
 export function bodyOf(payload: gmail_v1.Schema$MessagePart | undefined): {
   text: string;
   html: string;
 } {
-  let text = '';
+  let plain = '';
   let html = '';
 
   for (const part of walkParts(payload)) {
     // Attachments can be text/*; they are not the body.
     if (part.filename) continue;
     const mime = (part.mimeType ?? '').toLowerCase();
-    if (text === '' && mime === 'text/plain') text = decodeBody(part.body?.data);
+    if (plain === '' && mime === 'text/plain') plain = decodeBody(part.body?.data);
     else if (html === '' && mime === 'text/html') html = decodeBody(part.body?.data);
   }
 
-  return { text: text === '' ? htmlToText(html) : text, html };
+  const rendered = htmlToText(html);
+  return { text: rendered.length > plain.trim().length ? rendered : plain, html };
 }
 
 export function toEmail(message: gmail_v1.Schema$Message): Email {

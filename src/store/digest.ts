@@ -20,28 +20,27 @@ export type DigestItem = {
  * `digested_at IS NULL` is the whole idempotency story: a second run in the same morning
  * finds nothing, because the first run marked what it sent (invariant 4).
  *
- * Restricted to `prompt_version` so a rubric bump does not resurface jobs already reported —
- * their old score row is still there, but it is not the current one.
+ * **Each job's highest `prompt_version`, not a pinned one.** Pinning the current version looked
+ * tidier and quietly broke on the first rubric bump: a job scored under v2 and matched but not
+ * yet reported would stop joining, and would never be reported at all. Taking the latest score
+ * per job means a bump changes what the digest *says* about a job, never whether it appears.
  */
-export function pendingDigestItems(
-  db: Db,
-  promptVersion: number,
-  limit?: number,
-): DigestItem[] {
+export function pendingDigestItems(db: Db, limit?: number): DigestItem[] {
   const rows = db
     .prepare(
       `SELECT j.*, c.name AS company_name, s.*
          FROM jobs j
          JOIN companies c ON c.id = j.company_id
-         JOIN job_scores s ON s.job_id = j.id AND s.prompt_version = ?
-        WHERE j.state = 'MATCHED' AND j.digested_at IS NULL
+         JOIN job_scores s ON s.job_id = j.id
+        WHERE j.state = 'MATCHED'
+          AND j.digested_at IS NULL
+          AND s.prompt_version = (
+            SELECT MAX(prompt_version) FROM job_scores WHERE job_id = j.id
+          )
         ORDER BY s.fit_score DESC, j.first_seen_at
         ${limit === undefined ? '' : 'LIMIT ?'}`,
     )
-    .all(...(limit === undefined ? [promptVersion] : [promptVersion, limit])) as Record<
-    string,
-    unknown
-  >[];
+    .all(...(limit === undefined ? [] : [limit])) as Record<string, unknown>[];
 
   // `SELECT j.*, s.*` collides on job_id/prompt_version only, and both schemas are parsed
   // from the same flat row — Zod ignores the extra keys each one does not want.

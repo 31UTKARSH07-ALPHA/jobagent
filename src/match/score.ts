@@ -22,7 +22,7 @@ import { complete } from '../llm/groq.ts';
 import { modelFor } from '../llm/models.ts';
 import { openDb, DEFAULT_DB_PATH, transaction } from '../store/db.ts';
 import { getJob } from '../store/jobs.ts';
-import { factorsOf, getScore, insertScore, scoreDistribution } from '../store/scores.ts';
+import { factorsOf, getScore, insertScore, latestScore, scoreDistribution } from '../store/scores.ts';
 import { jobIdsInState, transition } from '../store/state.ts';
 import { ScoreResult, type Job, type JobState, type Profile } from '../store/schema.ts';
 import { loadProfile } from './profile.ts';
@@ -33,7 +33,7 @@ import type { StageContext } from '../stage.ts';
  * kept, so the two distributions can be compared before thresholds are touched
  * (decision 008). Never edit the prompt without bumping it.
  */
-export const PROMPT_VERSION = 2;
+export const PROMPT_VERSION = 3;
 
 /**
  * `fit_score >= MATCH_THRESHOLD` → MATCHED, below → REJECTED (terminal).
@@ -84,6 +84,9 @@ location_fit — can the candidate work this job from India?
    0  onsite in another country, with no remote or relocation offered
   A posting that names a foreign office and never mentions remote is 0, whatever a "remote"
   checkbox elsewhere claims. Location "not stated" with no clue in the description is 6.
+
+If the posting has no description, say so in "reasoning" and rate stack_fit and domain_fit no
+higher than 6 — a title alone is not evidence that a stack matches, only that it might.
 
 stack_fit — how much of the posting's core technology has this candidate actually used?
   10  the posting's main languages and tools are the ones they have built with
@@ -145,6 +148,46 @@ export function fitScore(r: ScoreResult): number {
   const blocked =
     r.level_fit <= BLOCKER_AT_OR_BELOW || r.location_fit <= BLOCKER_AT_OR_BELOW;
   return blocked ? Math.min(score, BLOCKED_CEILING) : score;
+}
+
+/**
+ * A description shorter than this is no evidence at all — a title, a company and a city.
+ * Alert-email postings are all like this by construction (decision 016).
+ */
+export const MIN_DESCRIPTION_CHARS = 200;
+
+/**
+ * Ceiling on `stack_fit` and `domain_fit` when there is no job description.
+ *
+ * Measured 2026-08-11, the first run with Naukri postings in it: all three came back
+ * 10/10/10/10 → **100**, the same score Stripe's internship got with a full JD confirming the
+ * match. That is not the model being generous, it is the model being asked an unanswerable
+ * question: with only "Python / AI-ML / Full Stack Developer Intern" to go on there is nothing
+ * to deduct against, so nothing gets deducted. The score silently stops meaning "good fit" and
+ * starts meaning "the title sounds like me".
+ *
+ * 6 is chosen for what it does to the arithmetic. A title-only posting tops out at
+ * `10·.3 + 10·.25 + 6·.25 + 6·.2` = **82** — comfortably MATCHED, and permanently below the
+ * 85 that Phase 3 requires for an auto-send. A posting nobody has read cannot mail itself.
+ */
+export const TITLE_ONLY_CAP = 6;
+
+export const isTitleOnly = (job: Pick<Job, 'description'>): boolean =>
+  job.description.trim().length < MIN_DESCRIPTION_CHARS;
+
+/**
+ * Hold the two evidence-dependent factors down to what the evidence supports.
+ *
+ * A gate in code, not a sentence in the prompt — the prompt says so too, but decision 012
+ * established that prose the model agrees with is prose the model then ignores.
+ */
+export function clampToEvidence(result: ScoreResult, titleOnly: boolean): ScoreResult {
+  if (!titleOnly) return result;
+  return {
+    ...result,
+    stack_fit: Math.min(result.stack_fit, TITLE_ONLY_CAP),
+    domain_fit: Math.min(result.domain_fit, TITLE_ONLY_CAP),
+  };
 }
 
 /** `level 10 · location 8 · stack 6 · domain 4` — for logs and, later, the digest. */
@@ -286,11 +329,13 @@ export async function runScore(ctx: StageContext, deps: ScoreDeps = {}): Promise
       // A score row already here means a previous run died between the insert and the
       // transition. Reuse it rather than paying for the same judgement twice.
       const existing = getScore(ctx.db, job.id, PROMPT_VERSION);
+      const titleOnly = isTitleOnly(job);
       const result = existing
         ? factorsOf(existing)
-        : await scorer.score(job, job.company_name, profile);
+        : clampToEvidence(await scorer.score(job, job.company_name, profile), titleOnly);
 
       if (existing) ctx.count('reused_score');
+      if (titleOnly && !existing) ctx.count('title_only');
 
       const fit = fitScore(result);
       const next = stateForScore(fit);
@@ -343,6 +388,88 @@ function printDistribution(dbPath: string): number {
   return 0;
 }
 
+/**
+ * Score every job that has no score under the current `PROMPT_VERSION`, whatever state it is
+ * in, and **without touching state**.
+ *
+ * This is the mechanism decision 008 assumed when it keyed `job_scores` on `prompt_version`:
+ * bump the rubric, re-score, compare distributions before moving a threshold. It exists so
+ * that a rubric change never requires editing the database by hand.
+ *
+ * State is deliberately left alone. A job that was MATCHED and now scores below the threshold
+ * cannot legally go back to REJECTED (`src/store/state.ts` has no such edge, by design — it
+ * may already have a draft written about it). Those cases are printed as disagreements for a
+ * human to look at, which is the honest outcome rather than a silent demotion.
+ */
+async function rescore(dbPath: string, limit: number): Promise<number> {
+  const db = openDb(dbPath);
+  const profile = loadProfile();
+
+  const rows = db
+    .prepare(
+      `SELECT j.id FROM jobs j
+        WHERE j.state <> 'EXPIRED'
+          AND NOT EXISTS (
+            SELECT 1 FROM job_scores s WHERE s.job_id = j.id AND s.prompt_version = ?
+          )
+        ORDER BY j.id
+        LIMIT ?`,
+    )
+    .all(PROMPT_VERSION, limit) as { id: number }[];
+
+  if (rows.length === 0) {
+    console.log(`every job already has a rubric v${PROMPT_VERSION} score`);
+    db.close();
+    return 0;
+  }
+
+  console.log(`re-scoring ${rows.length} job(s) under rubric v${PROMPT_VERSION}\n`);
+  const disagreements: string[] = [];
+
+  for (const { id } of rows) {
+    const job = getJob(db, id);
+    if (job === null) continue;
+    const company = db.prepare('SELECT name FROM companies WHERE id = ?').get(job.company_id) as
+      | { name: string }
+      | undefined;
+
+    const previous = latestScore(db, id);
+
+    try {
+      const raw = await groqScorer.score(job, company?.name ?? '(unknown)', profile);
+      const result = clampToEvidence(raw, isTitleOnly(job));
+      const fit = fitScore(result);
+      insertScore(db, id, PROMPT_VERSION, fit, result, groqScorer.model);
+
+      const was = previous === null ? '—' : `${previous.fit_score} (v${previous.prompt_version})`;
+      const arrow = previous === null || previous.fit_score === fit ? ' ' : fit > previous.fit_score ? '↑' : '↓';
+      console.log(
+        `  ${String(fit).padStart(3)} ${arrow} was ${was.padEnd(10)} ${job.title.slice(0, 46).padEnd(46)} [${factorLine(result)}]`,
+      );
+
+      const shouldBe = stateForScore(fit);
+      if (
+        (job.state === 'MATCHED' && shouldBe === 'REJECTED') ||
+        (job.state === 'REJECTED' && shouldBe === 'MATCHED')
+      ) {
+        disagreements.push(`  job ${id} is ${job.state} but v${PROMPT_VERSION} says ${shouldBe} (${fit}) — ${job.title}`);
+      }
+    } catch (err) {
+      console.error(`  job ${id} failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  if (disagreements.length > 0) {
+    console.log(`\n${disagreements.length} job(s) whose state no longer matches their score:`);
+    console.log(disagreements.join('\n'));
+    console.log('\nState is not changed by a re-score — see the note on `rescore` in this file.');
+  }
+
+  db.close();
+  console.log();
+  return printDistribution(dbPath);
+}
+
 async function scoreOne(dbPath: string, jobId: number): Promise<number> {
   const db = openDb(dbPath);
   const job = getJob(db, jobId);
@@ -373,14 +500,19 @@ async function main(argv: string[]): Promise<number> {
     options: {
       job: { type: 'string' },
       distribution: { type: 'boolean', default: false },
+      rescore: { type: 'boolean', default: false },
+      limit: { type: 'string', default: String(MAX_SCORES_PER_RUN) },
       db: { type: 'string', default: DEFAULT_DB_PATH },
     },
   });
 
   if (values.distribution) return printDistribution(values.db);
   if (values.job !== undefined) return scoreOne(values.db, Number(values.job));
+  if (values.rescore) return rescore(values.db, Number(values.limit));
 
-  console.error('usage: node src/match/score.ts --job=<id> | --distribution [--db=<path>]');
+  console.error('usage: node src/match/score.ts --job=<id> | --distribution | --rescore [--db=<path>]');
+  console.error('       --rescore  score every job missing a score at the current PROMPT_VERSION,');
+  console.error('                  without changing any state. For the calibration gate.');
   console.error('       (to score everything waiting: node src/main.ts --stage=score)');
   return 2;
 }

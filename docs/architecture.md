@@ -111,7 +111,7 @@ on four identical prompts — and `REJECTED` is terminal. Decision 012 has the m
 
 | # | Stage | Reads | Writes | Cadence |
 |---|---|---|---|---|
-| 1 | Ingest | source adapters | `jobs` (upsert), `companies` | daily |
+| 1 | Ingest | source adapters, incl. Gmail alert mail | `jobs` (upsert), `companies` | daily |
 | 2 | Prefilter | `jobs` @ DISCOVERED | in-memory → top ~30 | daily |
 | 3 | Score | `jobs` @ DISCOVERED (prefilter is not built — see `phases.md`) | `job_scores`, state | daily |
 | 4 | Contacts | `jobs` @ MATCHED | `contacts`, state | daily |
@@ -130,8 +130,14 @@ interface JobSource {
 }
 ```
 
-Greenhouse, Lever, Ashby, GmailAlerts, HackerNews all satisfy this. Adding a source is
-one new file plus one line in the registry.
+Greenhouse, Lever, Ashby, Workable and GmailAlerts all satisfy this. Adding a source is one
+new file plus one line in the registry.
+
+The Gmail source is the one adapter that receives a company **name** rather than a board whose
+owner is already known, so it is constructed with the DB and resolves the name to a domain via
+`src/ingest/resolve-company.ts` — an unresolvable name becomes an explicit
+`something.unknown.invalid` marker rather than a guess (decision 016). Its per-format parsers
+live in `src/ingest/*-alert.ts`; one entry in `PARSERS` adds a format.
 
 Stage 8 runs on its **own schedule**, not as part of the daily pipeline. Replies and
 bounces arrive continuously; checking once a day wastes a day.
@@ -146,7 +152,7 @@ The pipeline must be safe to run twice in a row.
 | Stage | Rule |
 |---|---|
 | Ingest | Upsert on `dedup_key`; bump `last_seen_at` |
-| Score | Only picks up DISCOVERED rows; a `(job_id, prompt_version)` row already there is reused rather than re-requested |
+| Score | Only picks up DISCOVERED rows; a `(job_id, prompt_version)` row already there is reused rather than re-requested. `--rescore` is the out-of-band path for a rubric bump: writes scores, never states |
 | Contacts | Skip if the company already has a contact |
 | Digest | Skip if `jobs.digested_at` is set; it is set only after Telegram accepts the message |
 | Draft | Skip if an `outreach` row exists for `job_id` |

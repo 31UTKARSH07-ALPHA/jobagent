@@ -86,7 +86,7 @@ test('the digest reports best first', () => {
   seedMatch(db, { title: 'Great Intern', fit: 97 });
   seedMatch(db, { title: 'Good Intern', fit: 88 });
 
-  const items = pendingDigestItems(db, PROMPT_VERSION);
+  const items = pendingDigestItems(db);
   assert.deepEqual(
     items.map((i) => i.score.fit_score),
     [97, 88, 74],
@@ -96,7 +96,7 @@ test('the digest reports best first', () => {
   db.close();
 });
 
-test('only MATCHED jobs scored under the current rubric are reported', () => {
+test('rejected jobs never appear, and a rubric bump never hides a match', () => {
   const db = openDb(':memory:');
   const matched = seedMatch(db);
 
@@ -117,7 +117,8 @@ test('only MATCHED jobs scored under the current rubric are reported', () => {
   transition(db, rejected, 'DISCOVERED', 'SCORED');
   transition(db, rejected, 'SCORED', 'REJECTED');
 
-  // Matched, but only ever scored under an older rubric.
+  // Matched under an older rubric and not yet reported. Pinning the current prompt_version
+  // used to drop this job from the digest permanently — it must still appear.
   const { id: stale } = upsertJob(
     db,
     companyId,
@@ -133,8 +134,21 @@ test('only MATCHED jobs scored under the current rubric are reported', () => {
   transition(db, stale, 'DISCOVERED', 'SCORED');
   transition(db, stale, 'SCORED', 'MATCHED');
 
-  const ids = pendingDigestItems(db, PROMPT_VERSION).map((i) => i.job.id);
-  assert.deepEqual(ids, [matched]);
+  const ids = pendingDigestItems(db).map((i) => i.job.id);
+  assert.deepEqual(ids.sort(), [matched, stale].sort(), 'the rejected one is absent, the older-rubric one is not');
+  db.close();
+});
+
+test('a re-scored job is reported once, with its newest score', () => {
+  const db = openDb(':memory:');
+  const id = seedMatch(db, { fit: 90 });
+  // A rubric bump re-scores it lower. The digest must not show the job twice, and must quote
+  // the new number.
+  insertScore(db, id, PROMPT_VERSION + 1, 62, judgement({ stack_fit: 3 }), 'test-model');
+
+  const items = pendingDigestItems(db);
+  assert.equal(items.length, 1, 'one row per job, not one per score');
+  assert.equal(items[0]?.score.fit_score, 62);
   db.close();
 });
 
@@ -170,7 +184,7 @@ test('a failed send leaves everything unreported, so tomorrow retries it', async
     /502/,
   );
 
-  assert.equal(pendingDigestItems(db, PROMPT_VERSION).length, 1, 'still pending');
+  assert.equal(pendingDigestItems(db).length, 1, 'still pending');
 
   // And the retry works.
   const { calls, send } = fakeSend();
@@ -189,7 +203,7 @@ test('a dry run prints without sending and without marking anything', async () =
 
   assert.equal(calls.length, 0, 'nothing sent');
   assert.equal(ctx.counts['would_send'], 1);
-  assert.equal(pendingDigestItems(db, PROMPT_VERSION).length, 1, 'nothing marked');
+  assert.equal(pendingDigestItems(db).length, 1, 'nothing marked');
   db.close();
 });
 
@@ -204,12 +218,12 @@ test('an over-long day holds the remainder over instead of dropping it', async (
 
   assert.equal(ctx.counts['reported'], MAX_ITEMS_PER_DIGEST);
   assert.match(calls[0]!, /2 more waiting/);
-  assert.equal(pendingDigestItems(db, PROMPT_VERSION).length, 2);
+  assert.equal(pendingDigestItems(db).length, 2);
 
   // The held-over two arrive next time — and they are the lowest scorers, since the digest
   // sends the best first.
   await runDigest(context(db), { send, config: CONFIG });
-  assert.equal(pendingDigestItems(db, PROMPT_VERSION).length, 0);
+  assert.equal(pendingDigestItems(db).length, 0);
   db.close();
 });
 
@@ -229,7 +243,7 @@ test('a missing token is a note, not a crash — the matches simply wait', async
   }
 
   assert.match(ctx.logs.join(), /BotFather/, 'the log says how to fix it');
-  assert.equal(pendingDigestItems(db, PROMPT_VERSION).length, 1, 'still pending');
+  assert.equal(pendingDigestItems(db).length, 1, 'still pending');
   db.close();
 });
 
@@ -241,7 +255,7 @@ test('a hostile job title cannot break the markup', () => {
   const db = openDb(':memory:');
   seedMatch(db, { title: 'SDE <script>alert(1)</script> & "Intern" >_<', company: 'A&B' });
 
-  const text = formatDigest(pendingDigestItems(db, PROMPT_VERSION));
+  const text = formatDigest(pendingDigestItems(db));
   assert.equal(text.includes('<script>'), false, 'no raw tag survives');
   assert.match(text, /&lt;script&gt;/);
   assert.match(text, /A&amp;B/, 'ampersands are escaped, including in the company name');
