@@ -439,3 +439,59 @@ shortens the run materially.
 **Revisit when.** A model's limit is seen to differ from `tpm` in a real error. `ASSUMED_TPM`
 is applied to the two models whose limits have never been observed; that is a guess, but a
 conservative one — too low costs throughput, too high costs a job.
+
+---
+
+## 018 — The schedule is a generated launchd agent driving one shell wrapper
+
+**Decision.** `com.utkarsh.jobagent.daily` runs `scripts/run-daily.sh` at 06:00 local. The
+plist is *generated* by `src/schedule/launchd.ts` (`--print` / `--install` / `--status` /
+`--uninstall` / `--kickstart`), not committed. Installed and loaded on 2026-08-12 with
+Utkarsh's explicit go-ahead.
+
+**Why generate it.** Every value in a plist is absolute and machine-specific: the project
+path, the node binary, `$HOME`. A committed plist is one laptop's paths in a file that
+silently runs the wrong thing anywhere else — and paths written from memory are the classic
+way a scheduled job fails at 06:00 with nobody watching. The generator reads them off the
+running process, so `--print` is exactly what `--install` writes.
+
+**Why a shell wrapper rather than node straight from the plist.** The wrapper is the one
+entry point both launchd and a human use, which kills "works when I run it, fails on the
+schedule" as a category. It also owns the log — a timestamped header per run, the exit code,
+and rotation at 5 MB — none of which launchd does. `StandardOutPath` is therefore `/dev/null`
+(the wrapper tees into `logs/daily.log`; duplicating it would double every line) and
+`StandardErrorPath` catches only launchd-level failures, like a wrapper without `+x`.
+
+**The four things launchd gets wrong if you assume a normal shell:**
+
+- The environment is near-empty and there is no login shell, so `PATH` will not find `node`.
+  The plist records an absolute path in `JOBAGENT_NODE`; the wrapper falls back to `PATH`
+  only when run by hand.
+- `cwd` is `/`. `node --env-file-if-exists=.env`, `data/jobagent.db`, `token.json` and
+  `credentials.json` are all relative, so `WorkingDirectory` is load-bearing.
+- `process.execPath` is `/opt/homebrew/Cellar/node/25.2.1/bin/node` — a version-pinned path
+  that stops existing at the next `brew upgrade`, taking the schedule with it. `resolveNode()`
+  records `/opt/homebrew/bin/node` instead, after checking it resolves to the same binary,
+  and warns when no stable symlink exists.
+- `bootstrap` refuses a label that is already loaded, so `--install` boots out first. That is
+  what makes re-installing after an edit a normal thing to do rather than an error.
+
+**`RunAtLoad` is false.** Installing the agent, or logging in, must not fire a pipeline run
+and a Telegram digest. The only trigger is the calendar entry, and `--kickstart` when a human
+asks for one.
+
+**`StartCalendarInterval`, not `StartInterval`.** A sleeping or shut laptop runs the missed
+job on wake. `StartInterval` counts from load and drifts a little further every day.
+
+**No heartbeat here either.** Decision 014 keeps the digest silent when nothing matched, and
+noted that a dead schedule is this layer's problem. It still is — but the answer is
+`--status` (loaded? last exit code? how many runs?) and `logs/daily.log`, not a daily "I am
+alive" message that becomes one more thing not to read.
+
+**What is not covered.** macOS lists the agent under System Settings → General → Login Items
+& Extensions. Switched off there, launchd will not run it and nothing in this repo can tell.
+The first symptom is a morning with no digest; `--status` will still say `loaded`.
+
+**Revisit when.** Phase 3 adds the 4-hourly tracker — a second `LaunchdJob` object in the
+same file, using `StartInterval`, because replies arrive continuously and a missed poll is
+not worth catching up on.

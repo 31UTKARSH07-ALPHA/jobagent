@@ -13,9 +13,14 @@ Do not restate architecture here. Point at `docs/architecture.md`.
 
 ## Now
 
-Phase 0 complete. Phase 1 is done except the schedule: **51 boards + Naukri alert email →
-score → Telegram digest**, all against real data. 136 tests green, `tsc --noEmit` clean,
-working tree clean, all pushed.
+Phase 0 complete. Phase 1 is **built end to end and now scheduled**: 51 boards + Naukri alert
+email → score → Telegram digest, all against real data, fired by a launchd agent at 06:00.
+144 tests green, `tsc --noEmit` clean, working tree clean, all pushed.
+
+**The agent is installed and loaded, and has never fired.** `com.utkarsh.jobagent.daily`,
+installed 2026-08-12 with Utkarsh's explicit yes, runs `scripts/run-daily.sh` at 06:00 local.
+The first unattended run is **2026-08-13 06:00** — that run, not the install, is what closes
+Phase 1. Decision 018 has the reasoning; the four launchd traps it documents are all handled.
 
 | Works today | Command |
 |---|---|
@@ -31,6 +36,9 @@ working tree clean, all pushed.
 | **Gmail status** | `node src/gmail/auth.ts --status` |
 | **Inspect real alert mail** | `node src/gmail/messages.ts --query="from:naukri.com" --links --full` |
 | **Re-score after a rubric bump** | `node src/match/score.ts --rescore` |
+| **What launchd runs, run by hand** | `./scripts/run-daily.sh [--dry-run]` |
+| **Is the schedule alive?** | `node src/schedule/launchd.ts --status` |
+| **Reload it after an edit / remove it** | `node src/schedule/launchd.ts --install` / `--uninstall` |
 | Any model call | `complete()` / `chat()` in `src/llm/groq.ts` |
 
 **Gmail is live.** Authorised as `3107utkarshpathak@gmail.com` (`token.json`, mode 600),
@@ -59,7 +67,7 @@ Not built yet: contacts, drafting, sending. `src/main.ts` still logs those stage
 
 Nothing. Clean tree, no partial work.
 
-## Read decisions 012–016 before touching the scorer, the digest or the parsers
+## Read decisions 012–018 before touching the scorer, the digest, the parsers or the schedule
 
 Things a fresh session would otherwise undo, all measured rather than assumed:
 
@@ -93,6 +101,10 @@ Things a fresh session would otherwise undo, all measured rather than assumed:
 - **The digest takes each job's newest score, never a pinned `PROMPT_VERSION`.** Pinning
   looked tidier and dropped already-matched-but-unreported jobs from the digest forever on
   the first rubric bump.
+- **The plist is generated, never committed** (018), because every path in it is specific to
+  this laptop. `--print` shows exactly what `--install` writes. Do not hand-edit the installed
+  file — `--install` overwrites it. And `RunAtLoad` stays `false`: loading the agent must not
+  fire a pipeline run and a real digest.
 
 ## Coverage problem worth understanding before building more
 
@@ -120,21 +132,21 @@ either re-running `node src/gmail/auth.ts` weekly or a Workspace account on an o
 
 ## Next action
 
-**A launchd plist for the 06:00 run.** Everything works when run by hand; nothing runs on its
-own. That is the last thing between Phase 1 and "a digest arrives each morning". Two plists
-eventually (daily pipeline, and the 4-hourly tracker in Phase 3), but only the daily one is
-needed now: `ingest → score → digest`.
+**Check that the 06:00 run of 2026-08-13 actually happened**, before building anything else:
 
-Utkarsh said on 2026-08-12 he had done his three setup steps and told this session to carry on,
-which covers the schedule — but **confirm before `launchctl bootstrap`** all the same, and
-document the `bootout` command next to it. A background agent on someone's laptop should never
-be a surprise.
+```
+node src/schedule/launchd.ts --status     # runs = 1, last exit code = 0
+tail -40 logs/daily.log                   # a "── …  start" header, then the run
+cat logs/launchd.err                      # should not exist; if it does, launchd itself failed
+```
 
-Things a plist here gets wrong if written from memory: `launchd` runs with a near-empty
-environment, so it needs the absolute `node` path and an explicit `WorkingDirectory`, and
-`--env-file-if-exists=.env` only resolves relative to that directory. Send stdout/stderr to a
-log file under the project, and prefer `StartCalendarInterval` over `StartInterval` so a closed
-laptop catches up rather than drifting.
+Three ways it can be quietly dead, in order of likelihood: the laptop was off (launchd catches
+up on wake, so give it a few minutes after login before concluding anything); macOS disabled it
+under System Settings → General → Login Items & Extensions, where `--status` will still say
+`loaded`; or Gmail's token expired, which shows up as `invalid_grant` in the log — see *Blocked on
+Utkarsh* above, which is where that trap is written down.
+
+If it ran, Phase 1 is closed — update `phases.md`.
 
 Then, in order of value:
 
@@ -182,8 +194,6 @@ written, not before.
 
 ## Open questions not yet settled
 
-- Does Utkarsh want a launchd agent installed on this laptop, or would he rather run the
-  pipeline by hand until it has proved itself? Not asked yet.
 - Daily send cap: architecture says ramp to 8/day; original ask was 10–20. Not resolved.
 - Follow-ups: one at day 4, or none in v1?
 - Suppression: second role at an already-emailed company — approval queue, or skip?

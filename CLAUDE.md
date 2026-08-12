@@ -34,6 +34,10 @@ node src/notify/telegram.ts --test     # prove the bot is wired up
 node src/gmail/auth.ts                 # authorise Gmail (opens a browser, once)
 node src/gmail/auth.ts --status        # which account, which scopes
 node src/gmail/messages.ts --query="from:naukri.com" --links --full   # inspect real mail
+
+./scripts/run-daily.sh                 # exactly what launchd runs at 06:00
+node src/schedule/launchd.ts --status  # loaded? last exit code? how many runs?
+node src/schedule/launchd.ts --install # (re)write and load the agent; --uninstall removes it
 ```
 
 ## Invariants — violating these causes real-world damage

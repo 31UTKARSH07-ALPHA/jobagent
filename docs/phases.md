@@ -1,9 +1,10 @@
 # Phases
 
-> **Status: Phase 1 complete except the schedule. Ingest (51 boards + Naukri alert email) →
-> score → Telegram digest all work end to end against real data, and a real digest has landed
-> on Utkarsh's phone. Left: a launchd plist for the 06:00 run, and a LinkedIn parser once
-> LinkedIn's first real alert digest arrives.**
+> **Status: Phase 1 built end to end, awaiting one unattended run. Ingest (51 boards + Naukri
+> alert email) → score → Telegram digest all work against real data, a real digest has landed
+> on Utkarsh's phone, and the 06:00 launchd agent is installed and loaded (decision 018). The
+> last box ticks itself the first morning a digest arrives without anyone typing a command.
+> Left after that: a LinkedIn parser once LinkedIn's first real alert digest arrives.**
 > Update this header every time a phase completes. It is the first thing read each session.
 
 Ship each phase end-to-end before starting the next. A working Phase 1 already removes
@@ -54,15 +55,17 @@ yet. This alone replaces the manual searching.
       `jobs.digested_at`; silent when nothing new (decision 014)
 - [x] `src/main.ts` — stage runner + `--stage` / `--dry-run` flags *(done in Phase 0;
       stages just need real implementations plugged into `STAGES`)*
+- [x] `scripts/run-daily.sh` + `src/schedule/launchd.ts` — the 06:00 schedule. The plist is
+      generated from the running process, never committed (decision 018)
 
 **Done when:** a real Telegram digest arrives from a real cron run.
 
 A real digest has arrived — 3 matches, sent to Utkarsh's phone on 2026-08-10 — but from a
-hand-run `--stage=digest`, not from a schedule. What is left for Phase 1:
+hand-run `--stage=digest`. The agent was installed 2026-08-12 and has never fired, so the
+first unattended run is **2026-08-13 06:00**. What is left for Phase 1:
 
-1. **A launchd plist for the 06:00 run.** The only thing between "works when run" and
-   "arrives each morning". Blocked on nothing technical; ask before installing a background
-   agent on his laptop.
+1. **Confirm the first scheduled run.** `node src/schedule/launchd.ts --status` (`runs`
+   should be 1, `last exit code` 0) and `logs/daily.log`. Nothing else ticks this box.
 2. **The LinkedIn alert parser**, once there is a real LinkedIn *digest* to write it against.
    Alerts were created 2026-08-12 and the "alert has been created" confirmation arrived, which
    proves the alert and the forwarding filter both work — but a confirmation carries no job
@@ -106,7 +109,8 @@ change either the prompt or the weights, so the old distribution survives for co
 - [ ] Telegram approve/reject buttons wired to state transitions
 - [ ] `src/track/replies.ts` — reply + bounce detection, every 4h
 - [ ] Follow-up scheduler (day 4, once)
-- [ ] launchd plists for both schedules
+- [ ] The 4-hourly tracker schedule — a second `LaunchdJob` in `src/schedule/launchd.ts`,
+      `StartInterval` rather than a calendar entry (decision 018)
 
 **Ramp is mandatory:** 3/day week 1 → 5/day week 2 → 8/day week 3. Do not start at 8.
 

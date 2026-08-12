@@ -195,6 +195,7 @@ memory — same rule as ATS slugs (decision 010).
 ```
 06:00  ingest → prefilter → score → contacts → draft → digest
        └─ scoring is the long pole: ~67s per job (see below)
+       launchd agent com.utkarsh.jobagent.daily → scripts/run-daily.sh (decision 018)
 09:00  sends begin, jittered 3–15 min apart, under the daily cap
        ├─ AUTO_SEND items fire on schedule
        └─ approved items join the queue as taps arrive
