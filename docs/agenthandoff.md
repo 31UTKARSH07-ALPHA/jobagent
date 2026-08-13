@@ -17,10 +17,16 @@ Phase 0 complete. Phase 1 is **built end to end and now scheduled**: 51 boards +
 email → score → Telegram digest, all against real data, fired by a launchd agent at 06:00.
 144 tests green, `tsc --noEmit` clean, working tree clean, all pushed.
 
-**The agent is installed and loaded, and has never fired.** `com.utkarsh.jobagent.daily`,
-installed 2026-08-12 with Utkarsh's explicit yes, runs `scripts/run-daily.sh` at 06:00 local.
-The first unattended run is **2026-08-13 06:00** — that run, not the install, is what closes
-Phase 1. Decision 018 has the reasoning; the four launchd traps it documents are all handled.
+**The first scheduled run failed, and the fix moved the repo.** 2026-08-13 06:00 exited **126**
+before the wrapper ran a single line: macOS TCC protects `~/Desktop`, launchd holds no consent
+for it, and every hand-run had worked only because Terminal does. The project now lives at
+**`~/jobagent`** — never move it back under Desktop, Documents or Downloads (decision 018a).
+
+Verified the same morning by kickstarting a throwaway launchd agent running
+`--stage=digest --dry-run`: **exit 0, empty stderr**, `.env` loaded, digest rendered. That is
+the only test that proves anything here — `env -i` reproduces launchd's environment but not its
+*identity*, and TCC is a question of who is asking. The next unattended run is
+**2026-08-14 06:00**, and that run is what closes Phase 1.
 
 | Works today | Command |
 |---|---|
@@ -132,19 +138,26 @@ either re-running `node src/gmail/auth.ts` weekly or a Workspace account on an o
 
 ## Next action
 
-**Check that the 06:00 run of 2026-08-13 actually happened**, before building anything else:
+**Check that the 06:00 run of 2026-08-14 actually happened**, before building anything else.
+This is the first run from `~/jobagent`; the 08-13 one died on TCC (018a) and its exit-126 is
+still the `runs = 1` in launchd's counter until a new run replaces it.
 
 ```
-node src/schedule/launchd.ts --status     # runs = 1, last exit code = 0
-tail -40 logs/daily.log                   # a "── …  start" header, then the run
-cat logs/launchd.err                      # should not exist; if it does, launchd itself failed
+node src/schedule/launchd.ts --status     # last exit code = 0
+tail -40 logs/daily.log                   # a "── …  start" header, then the whole run
+cat logs/launchd.err                      # stale 08-13 content; anything newer means exec failed
 ```
 
-Three ways it can be quietly dead, in order of likelihood: the laptop was off (launchd catches
-up on wake, so give it a few minutes after login before concluding anything); macOS disabled it
+Read those two logs as answering different questions: an empty `daily.log` with a non-zero exit
+means the wrapper never started and `launchd.err` says why; a populated `daily.log` means it ran
+and the failure is in the pipeline.
+
+Four ways it can be quietly dead, in order of likelihood: the laptop was off (launchd catches up
+on wake, so give it a few minutes after login before concluding anything); the repo moved back
+under Desktop/Documents/Downloads and TCC is blocking exec again (018a); macOS disabled the agent
 under System Settings → General → Login Items & Extensions, where `--status` will still say
-`loaded`; or Gmail's token expired, which shows up as `invalid_grant` in the log — see *Blocked on
-Utkarsh* above, which is where that trap is written down.
+`loaded`; or Gmail's token expired, which shows up as `invalid_grant` — see *Blocked on Utkarsh*
+above, where that trap is written down.
 
 If it ran, Phase 1 is closed — update `phases.md`.
 

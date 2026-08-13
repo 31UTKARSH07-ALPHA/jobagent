@@ -3,8 +3,9 @@
 > **Status: Phase 1 built end to end, awaiting one unattended run. Ingest (51 boards + Naukri
 > alert email) → score → Telegram digest all work against real data, a real digest has landed
 > on Utkarsh's phone, and the 06:00 launchd agent is installed and loaded (decision 018). The
-> last box ticks itself the first morning a digest arrives without anyone typing a command.
-> Left after that: a LinkedIn parser once LinkedIn's first real alert digest arrives.**
+> 08-13 run failed on macOS TCC — the repo now lives at `~/jobagent`, verified through launchd
+> (018a) — so the last box ticks on the first morning a digest arrives without anyone typing a
+> command. Left after that: a LinkedIn parser once LinkedIn's first real alert digest arrives.**
 > Update this header every time a phase completes. It is the first thing read each session.
 
 Ship each phase end-to-end before starting the next. A working Phase 1 already removes
@@ -61,11 +62,12 @@ yet. This alone replaces the manual searching.
 **Done when:** a real Telegram digest arrives from a real cron run.
 
 A real digest has arrived — 3 matches, sent to Utkarsh's phone on 2026-08-10 — but from a
-hand-run `--stage=digest`. The agent was installed 2026-08-12 and has never fired, so the
-first unattended run is **2026-08-13 06:00**. What is left for Phase 1:
+hand-run `--stage=digest`. The agent fired for the first time on 2026-08-13 and failed on
+macOS TCC before running a line (018a); from `~/jobagent` it now runs clean under launchd, so
+the next unattended run is **2026-08-14 06:00**. What is left for Phase 1:
 
-1. **Confirm the first scheduled run.** `node src/schedule/launchd.ts --status` (`runs`
-   should be 1, `last exit code` 0) and `logs/daily.log`. Nothing else ticks this box.
+1. **Confirm a scheduled run end to end.** `node src/schedule/launchd.ts --status`
+   (`last exit code = 0`) and a full run in `logs/daily.log`. Nothing else ticks this box.
 2. **The LinkedIn alert parser**, once there is a real LinkedIn *digest* to write it against.
    Alerts were created 2026-08-12 and the "alert has been created" confirmation arrived, which
    proves the alert and the forwarding filter both work — but a confirmation carries no job

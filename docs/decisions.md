@@ -495,3 +495,32 @@ The first symptom is a morning with no digest; `--status` will still say `loaded
 **Revisit when.** Phase 3 adds the 4-hourly tracker — a second `LaunchdJob` object in the
 same file, using `StartInterval`, because replies arrive continuously and a missed poll is
 not worth catching up on.
+
+### 018a — The project cannot live under `~/Desktop`. Measured, not predicted
+
+The first scheduled run, 2026-08-13 06:00, failed in a way no test caught: **exit code 126**,
+before a single line of the wrapper executed.
+
+```
+shell-init: error retrieving current directory: getcwd: cannot access parent directories: Operation not permitted
+/bin/sh: /Users/utkarshpathak3107/Desktop/jobagent/scripts/run-daily.sh: Operation not permitted
+```
+
+macOS TCC protects `~/Desktop`, `~/Documents` and `~/Downloads` per *application*. Terminal
+holds that consent, so every hand-run worked — including the `env -i` test from `cwd /` that
+was supposed to prove the launchd environment. launchd holds no such consent and cannot even
+`exec` a 755 file it can see. The repo moved to `~/jobagent`, which TCC does not protect.
+
+**Why the pre-flight test missed it.** `env -i` reproduces launchd's *environment*. It does
+not reproduce launchd's *identity*, and TCC is a question of who is asking, not what is in the
+environment. Any future "does it work unattended" check has to run **through launchd** — a
+throwaway agent with `--stage=digest --dry-run` in its `ProgramArguments`, kickstarted and
+booted out. That test fails with 126 on Desktop and exits 0 from `~/jobagent`; both were run.
+
+**Why not Full Disk Access instead.** Keeping the path would mean granting FDA to `/bin/sh`
+and to the node binary — every shell script on the machine, to schedule one job, plus a
+re-approval each time Homebrew moves node.
+
+**The tell.** Exit 126 with an empty `logs/daily.log` means the wrapper never ran; the reason
+is in `logs/launchd.err`. A wrapper that runs and fails leaves a timestamped header in
+`daily.log` instead. Those two logs answer different questions, which is why both exist.

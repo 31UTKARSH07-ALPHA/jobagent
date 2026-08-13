@@ -71,6 +71,10 @@ node src/schedule/launchd.ts --install # (re)write and load the agent; --uninsta
   company and location alone (decision 016). Naukri's parser reads the URL *slug*, not the
   visible text, which truncates the company name.
 - Contacts are cached per **company**, not per job. Assume the cache is warm.
+- **The repo lives at `~/jobagent` and must never move under `~/Desktop`, `~/Documents` or
+  `~/Downloads`.** macOS TCC grants Terminal access to those folders, not launchd, so the
+  06:00 run dies at `exec` with `Operation not permitted` (exit 126) while every hand-run
+  works perfectly. Measured 2026-08-13, decision 018.
 
 ## Docs
 
