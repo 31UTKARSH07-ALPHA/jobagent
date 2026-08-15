@@ -20,13 +20,13 @@ import { searchEmails } from '../gmail/messages.ts';
 import { isEarlyCareerTechRole, matchesGeography } from './filter.ts';
 import { resolveCompany } from './resolve-company.ts';
 import { NAUKRI_SENDERS, parseNaukriEmail, toRawJob } from './naukri-alert.ts';
+import { LINKEDIN_SENDERS, parseLinkedInEmail } from './linkedin-alert.ts';
 
 /**
  * One entry per alert format we can actually read.
  *
- * LinkedIn is deliberately absent: as of 2026-08-11 there is not one LinkedIn alert in the
- * mailbox to write a parser against, and guessing at bulk-mail HTML produces a parser that
- * looks finished and reads nothing. Add it here when real mail exists.
+ * Both were written against real mail rather than guessed at — Naukri on 2026-08-11, LinkedIn
+ * on 2026-08-16, once 26 real digests had accumulated to write it against (decision 020).
  */
 type AlertParser = {
   name: string;
@@ -36,6 +36,7 @@ type AlertParser = {
 
 const PARSERS: AlertParser[] = [
   { name: 'naukri', senders: NAUKRI_SENDERS, parse: parseNaukriEmail },
+  { name: 'linkedin', senders: LINKEDIN_SENDERS, parse: parseLinkedInEmail },
 ];
 
 /**

@@ -51,7 +51,28 @@ export function upsertJob(db: Db, companyId: number, raw: RawJob): UpsertResult 
   const key = dedupKey(raw.company_domain, raw.title, raw.location);
   const now = nowIso();
 
-  const existing = db.prepare('SELECT id FROM jobs WHERE dedup_key = ?').get(key) as
+  // Two questions, asked in order of certainty.
+  //
+  // 1. Has this exact posting been seen before? A source id is the source's own identity
+  //    for the job, so when one exists it beats any similarity heuristic. LinkedIn mailed
+  //    job 4449869353 twice on 2026-08-16, writing its location as "Bengaluru" in one and
+  //    "Bengaluru, Karnataka, India" in the other — same posting, two hashes, two rows, two
+  //    67-second scoring calls, and the same job twice in the digest (decision 021).
+  // 2. Failing that, does something that looks like the same role already exist? That is
+  //    what `dedup_key` is for, and it is the only thing that can match *across* sources.
+  //
+  // `source_id` is nullable — a source that cannot name its postings falls through to the
+  // hash, which is exactly what it is for. Guarded explicitly rather than leaning on
+  // `NULL = NULL` being unknown in SQL, because that is a subtlety, not an intention.
+  const bySourceId =
+    raw.source_id === null || raw.source_id === ''
+      ? undefined
+      : db
+          .prepare('SELECT id FROM jobs WHERE source = ? AND source_id = ?')
+          .get(raw.source, raw.source_id);
+
+  const existing = (bySourceId ??
+    db.prepare('SELECT id FROM jobs WHERE dedup_key = ?').get(key)) as
     | { id: number }
     | undefined;
 

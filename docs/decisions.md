@@ -576,3 +576,79 @@ offline path exits 75 without writing a `runs` row.
 **Revisit when.** If runs start being skipped, 15 minutes is the number to raise — but check
 first whether the laptop is simply shut at 06:00, which is a scheduling question, not a
 networking one.
+
+---
+
+## 020 — The LinkedIn parser reads the title from the HTML and the fields from the text
+
+**Decision.** `src/ingest/linkedin-alert.ts` takes each posting's **title from the HTML
+anchor**, then finds that title in the `text/plain` part and reads the **company and location
+from the two lines beneath it**. One entry in `PARSERS`; nothing else changed.
+
+**Why it exists now and not on 2026-08-11.** It was deliberately deferred until real mail
+arrived (decision 016's rule). 26 LinkedIn digests had accumulated by 2026-08-16, every one
+counted as `alert_unparsed` — the counter did its job, which was to make the arrival visible.
+
+**Why not just count lines.** LinkedIn's text part is a clean stack:
+
+```
+Software Intern              ← title
+Terralogic                   ← company
+Greater Bengaluru Area       ← location
+This company is actively hiring     ← a badge, present on some cards and not others
+View job: https://www.linkedin.com/comm/jobs/view/4451230158/?trackingId=…
+```
+
+Counting lines from the link backwards works until LinkedIn adds a badge, and then the company
+silently becomes "Apply with resume & profile" and lands in `companies`, where the Phase 2
+contact cascade will try to find a domain for it. Anchoring on the title makes badge changes
+cost a *location* at worst. Two badges are known (`actively hiring`, `Apply with resume &
+profile`) and the list only has to be right about rejecting.
+
+**Why the HTML for the title.** Each card links its job twice — once from the logo, whose
+anchor text is empty, and once from the title. Both hrefs differ only in a `trk=` parameter,
+so a naive "first link wins" takes the empty one.
+
+**Unlike Naukri, the URL carries only the job id.** No company, no city (decision 016's slug
+trick does not transfer). But that id is worth having: every link carries a per-email
+`trackingId`, `midToken` and `otpToken`, so the stored URL is **rebuilt** from the id as
+`https://www.linkedin.com/jobs/view/<id>/`. That keeps single-use tokens out of the database
+and makes the same job mailed twice look the same both times.
+
+**Loud, not silent.** An email with job links but no readable cards throws, which the source
+layer counts as `alert_parse_failed` with the subject attached. A template change must not
+present as a quiet week.
+
+**Measured.** First run: alert postings went from 6 to 67, and 29 new jobs entered the DB —
+CoinDCX, Sony Research India, Enterpret, Freight Tiger, Sanas. Exactly the Indian companies
+decision 010 established have no ATS board at all.
+
+---
+
+## 021 — A source's own id identifies a posting; the hash is for cross-source matching
+
+**Decision.** `upsertJob` looks for an existing row by `(source, source_id)` first, and falls
+back to `dedup_key` only when the source cannot name its posting. Migration
+`004_source_id_identity.sql` adds the index and repairs the rows that already existed.
+
+**Why.** The LinkedIn parser exposed it immediately: LinkedIn mailed job **4449869353** twice
+on 2026-08-16, writing the location as `Bengaluru` in one email and `Bengaluru, Karnataka,
+India` in the other. `dedup_key` hashes domain + title + location, so that is two hashes and
+two rows for one posting — a wasted 67-second scoring call, and the same job listed twice in
+the morning digest.
+
+**Why keep `dedup_key` at all.** It is the only thing that can match the same role *across*
+sources — a Greenhouse posting and the LinkedIn alert about it have different ids and always
+will. The two mechanisms answer different questions, which is why the order matters: exact
+identity first, similarity second.
+
+**Why the index is not UNIQUE.** `source_id` is nullable, and a partial unique index would make
+an ingest run *fail* on a duplicate rather than absorb one. Ingest must never fail on data it
+can simply recognise.
+
+**Why the repair is conservative.** It keeps the earliest row of each duplicate set — the one
+with the truthful `first_seen_at` — and refuses to delete anything referenced by `job_scores`
+or `outreach`. Losing an audit trail to tidy up a duplicate is a bad trade.
+
+**Revisit when.** A source starts reusing ids across companies. Nothing observed does; the
+`source` column already separates Greenhouse's "5" from Naukri's "5".

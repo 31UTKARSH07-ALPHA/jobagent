@@ -122,3 +122,56 @@ test('stale jobs are found only in pre-draft states', () => {
   assert.deepEqual(staleJobIds(db, 14), [], 'terminal states are left alone');
   db.close();
 });
+
+test('a source id identifies a posting even when its location is written differently', () => {
+  // Real case, 2026-08-16: LinkedIn mailed job 4449869353 twice, writing the city as
+  // "Bengaluru" in one email and "Bengaluru, Karnataka, India" in the other. The hash of
+  // domain+title+location differs; the posting does not (decision 021).
+  const db = openDb(':memory:');
+  const companyId = upsertCompany(db, { name: 'peopleHum', domain: 'peoplehum.unknown.invalid' });
+
+  const first = upsertJob(db, companyId, raw({
+    source: 'gmail-alert', source_id: '4449869353',
+    title: 'DevOps Intern (AI Infrastructure)', location: 'Bengaluru',
+  }));
+  const second = upsertJob(db, companyId, raw({
+    source: 'gmail-alert', source_id: '4449869353',
+    title: 'DevOps Intern (AI Infrastructure)', location: 'Bengaluru, Karnataka, India',
+  }));
+
+  assert.equal(first.created, true);
+  assert.equal(second.created, false, 'the second sighting must not create a row');
+  assert.equal(second.id, first.id);
+  db.close();
+});
+
+test('the same source id under a different source is a different posting', () => {
+  // Greenhouse posting "5" and a Naukri posting "5" have nothing to do with each other.
+  const db = openDb(':memory:');
+  const companyId = upsertCompany(db, { name: 'Acme', domain: 'acme.com' });
+
+  const a = upsertJob(db, companyId, raw({ source: 'greenhouse', source_id: '5' }));
+  const b = upsertJob(db, companyId, raw({
+    source: 'gmail-alert', source_id: '5', title: 'Backend Intern',
+  }));
+
+  assert.equal(b.created, true);
+  assert.notEqual(a.id, b.id);
+  db.close();
+});
+
+test('a source with no id still dedups on the hash', () => {
+  // `source_id` is nullable. Null must fall through to the cross-source heuristic rather
+  // than collapsing every id-less posting into one row.
+  const db = openDb(':memory:');
+  const companyId = upsertCompany(db, { name: 'Acme', domain: 'acme.com' });
+
+  const a = upsertJob(db, companyId, raw({ source_id: null }));
+  const b = upsertJob(db, companyId, raw({ source_id: null }));
+  const c = upsertJob(db, companyId, raw({ source_id: null, title: 'A Totally Other Role' }));
+
+  assert.equal(b.created, false, 'identical posting, no id → matched on the hash');
+  assert.equal(b.id, a.id);
+  assert.equal(c.created, true, 'a different role must not be swallowed');
+  db.close();
+});

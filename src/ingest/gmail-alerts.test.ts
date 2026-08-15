@@ -143,17 +143,19 @@ test('the cheap filters apply to alerts exactly as they do to boards', async () 
 });
 
 test('a sender with no parser is counted and reported, never silently dropped', async () => {
-  // This is the signal that it is time to write the LinkedIn parser: the mail is arriving.
+  // How the LinkedIn parser came to exist: 26 of these piled up, `alert_unparsed` counted
+  // every one, and the payload was waiting in the mailbox when it was time to write it
+  // (decision 020). Indeed stands in for whichever source is next.
   const db = openDb(':memory:');
   const gmail = fakeGmail([
-    naukriMessage([{ slug: 'x', title: 'y' }], 'LinkedIn Job Alerts <jobalerts-noreply@linkedin.com>'),
+    naukriMessage([{ slug: 'x', title: 'y' }], 'Indeed Job Alerts <alert@indeed.com>'),
   ]);
 
   const { jobs, counts, errors } = await collect(gmail, db);
 
   assert.deepEqual(jobs, []);
   assert.equal(counts['alert_unparsed'], 1);
-  assert.match(errors.join(), /no parser for jobalerts-noreply@linkedin\.com/);
+  assert.match(errors.join(), /no parser for alert@indeed\.com/);
   db.close();
 });
 
