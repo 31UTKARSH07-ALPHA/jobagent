@@ -40,10 +40,10 @@ yet. This alone replaces the manual searching.
       not hand-written (decision 010). Add companies in `src/ingest/candidates.ts`.
 - [x] Gmail OAuth flow → `token.json` — `src/gmail/auth.ts`, loopback + PKCE (decision 015)
 - [x] `src/gmail/messages.ts` — search, MIME flattening, link extraction
-- [x] `src/ingest/gmail-alerts.ts` — alert emails as a `JobSource`. **Naukri parses**
-      (`src/ingest/naukri-alert.ts`, written against real mail). **LinkedIn does not yet
-      exist** — no LinkedIn alert has ever arrived in the mailbox to write it against;
-      such mail is fetched and counted as `alert_unparsed` so its arrival is visible
+- [x] `src/ingest/gmail-alerts.ts` — alert emails as a `JobSource`. **Naukri**
+      (`naukri-alert.ts`, 2026-08-11) and **LinkedIn** (`linkedin-alert.ts`, 2026-08-16),
+      both written against real mail. Unknown senders are counted as `alert_unparsed`,
+      which is how LinkedIn's arrival became visible in the first place
 - [x] `src/ingest/resolve-company.ts` — company name → domain, for sources that only
       give a display name
 - [x] `src/match/profile.ts` — resume PDF → typed profile (`unpdf` + Groq)
@@ -59,20 +59,16 @@ yet. This alone replaces the manual searching.
 - [x] `scripts/run-daily.sh` + `src/schedule/launchd.ts` — the 06:00 schedule. The plist is
       generated from the running process, never committed (decision 018)
 
-**Done when:** a real Telegram digest arrives from a real cron run.
+**Done when:** a real Telegram digest arrives from a real cron run. ✅ **2026-08-14 06:11** —
+scheduled, unattended, exit 0, 3 matches reported.
 
-A real digest has arrived — 3 matches, sent to Utkarsh's phone on 2026-08-10 — but from a
-hand-run `--stage=digest`. The agent fired for the first time on 2026-08-13 and failed on
-macOS TCC before running a line (018a); from `~/jobagent` it now runs clean under launchd, so
-the next unattended run is **2026-08-14 06:00**. What is left for Phase 1:
+Two things were learned in the three days after, and both are the reason the box took a week
+longer than "the code works" suggested:
 
-1. **Done** — the 2026-08-14 06:11 run reported 3 matches unattended.
-   (`last exit code = 0`) and a full run in `logs/daily.log`. Nothing else ticks this box.
-2. **The LinkedIn alert parser**, once there is a real LinkedIn *digest* to write it against.
-   Alerts were created 2026-08-12 and the "alert has been created" confirmation arrived, which
-   proves the alert and the forwarding filter both work — but a confirmation carries no job
-   listings. Watch `alert_unparsed` in `runs.stats.ingest`. Not a guess-and-hope job:
-   bulk-mail HTML written blind produces a parser that passes its own tests and reads nothing.
+- A scheduled run can be **green and useless**. 08-14 and 08-15 both exited 0 having found
+  nothing, because Wi-Fi was still asleep (019). Exit code is not evidence of work.
+- The digest's silence (014) means **the logs are the only place a dead morning shows up**.
+  That is still the right default, but it changes where to look.
 
 ### Calibration gate — do not skip
 
