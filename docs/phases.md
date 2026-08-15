@@ -1,11 +1,11 @@
 # Phases
 
-> **Status: Phase 1 built end to end, awaiting one unattended run. Ingest (51 boards + Naukri
-> alert email) → score → Telegram digest all work against real data, a real digest has landed
-> on Utkarsh's phone, and the 06:00 launchd agent is installed and loaded (decision 018). The
-> 08-13 run failed on macOS TCC — the repo now lives at `~/jobagent`, verified through launchd
-> (018a) — so the last box ticks on the first morning a digest arrives without anyone typing a
-> command. Left after that: a LinkedIn parser once LinkedIn's first real alert digest arrives.**
+> **Status: Phase 1 complete.** The 2026-08-14 06:11 run was scheduled, unattended, and put 3
+> matches on Utkarsh's phone. Since then: the 06:00 network gate (019), because three days of
+> runs found nothing while Wi-Fi was still asleep, and the LinkedIn parser (020), because 26
+> real digests finally arrived — alert postings went 6 → 67 in a run. 30 jobs are scored on the
+> next run. **Next: the calibration gate (008), which needed exactly this volume.** Phase 2
+> (contacts, drafts) is unblocked and unstarted.
 > Update this header every time a phase completes. It is the first thing read each session.
 
 Ship each phase end-to-end before starting the next. A working Phase 1 already removes
@@ -66,7 +66,7 @@ hand-run `--stage=digest`. The agent fired for the first time on 2026-08-13 and 
 macOS TCC before running a line (018a); from `~/jobagent` it now runs clean under launchd, so
 the next unattended run is **2026-08-14 06:00**. What is left for Phase 1:
 
-1. **Confirm a scheduled run end to end.** `node src/schedule/launchd.ts --status`
+1. **Done** — the 2026-08-14 06:11 run reported 3 matches unattended.
    (`last exit code = 0`) and a full run in `logs/daily.log`. Nothing else ticks this box.
 2. **The LinkedIn alert parser**, once there is a real LinkedIn *digest* to write it against.
    Alerts were created 2026-08-12 and the "alert has been created" confirmation arrived, which

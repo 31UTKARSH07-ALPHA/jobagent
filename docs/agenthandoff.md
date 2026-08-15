@@ -13,20 +13,25 @@ Do not restate architecture here. Point at `docs/architecture.md`.
 
 ## Now
 
-Phase 0 complete. Phase 1 is **built end to end and now scheduled**: 51 boards + Naukri alert
-email → score → Telegram digest, all against real data, fired by a launchd agent at 06:00.
-144 tests green, `tsc --noEmit` clean, working tree clean, all pushed.
+**Phase 1 is closed.** The 2026-08-14 06:11 run was scheduled, unattended, exit 0, and reported
+3 matches to Telegram — the criterion, met. 161 tests green, `tsc --noEmit` clean, tree clean,
+all pushed. The repo lives at **`~/jobagent`** and must never move back under Desktop,
+Documents or Downloads (decision 018a).
 
-**The first scheduled run failed, and the fix moved the repo.** 2026-08-13 06:00 exited **126**
-before the wrapper ran a single line: macOS TCC protects `~/Desktop`, launchd holds no consent
-for it, and every hand-run had worked only because Terminal does. The project now lives at
-**`~/jobagent`** — never move it back under Desktop, Documents or Downloads (decision 018a).
+**Then three days of scheduled runs found nothing, and it took reading the logs to notice.**
+Two separate faults, both now fixed, both worth understanding before trusting a green run:
 
-Verified the same morning by kickstarting a throwaway launchd agent running
-`--stage=digest --dry-run`: **exit 0, empty stderr**, `.env` loaded, digest rendered. That is
-the only test that proves anything here — `env -i` reproduces launchd's environment but not its
-*identity*, and TCC is a question of who is asking. The next unattended run is
-**2026-08-14 06:00**, and that run is what closes Phase 1.
+1. **No network at 06:00** (019). launchd runs a missed calendar job when the laptop *wakes*,
+   Wi-Fi associates a minute later, and both runs started ~06:12 against a dead resolver: 51
+   boards failed, `getaddrinfo ENOTFOUND oauth2.googleapis.com`, **55 minutes** to reach zero
+   jobs. The same ingest by hand takes 38 seconds. `scripts/run-daily.sh` now waits for the
+   network and skips with exit 75 rather than writing a run of failures.
+2. **The digest's silence hid it** (014). Zero jobs and an hour of failing DNS look identical
+   from the phone. That is still the right default — but it means *the logs are the only place
+   a dead morning shows up*. Check `--status` and `logs/daily.log`, not your Telegram.
+
+**LinkedIn is live** (020). 26 digests had piled up as `alert_unparsed`, exactly as intended,
+and there is now a parser written against them. Alert postings went 6 → 67 in one run.
 
 | Works today | Command |
 |---|---|
@@ -53,19 +58,18 @@ scopes readonly + compose + send. Telegram bot `@utkarsh_jobagent_bot`, token an
 note that Gmail's "Disable forwarding" radio only governs blanket forwarding, so a filter
 forwards regardless of what that radio says.
 
-9 jobs in the DB, 6 MATCHED / 3 REJECTED, 3 of them from Naukri alert email. All 9 carry a
-rubric **v3** score (`min 30, median 82, max 100`); ignore v1 and v2 rows, see below.
+**39 jobs in the DB: 30 DISCOVERED, 6 MATCHED, 3 REJECTED**, across 33 companies. The 30 are
+unscored and waiting for the next 06:00 run — at ~67s each that is **~34 minutes** of scoring,
+inside `MAX_SCORES_PER_RUN` (60) but the longest run yet. The 9 older jobs carry a rubric **v3**
+score (`min 30, median 82, max 100`); ignore v1 and v2 rows, see below.
 
-**Throughput is now the interesting constraint:** ~67s per scored job, 9 jobs in 10m02s, since
-the pacer waits for token headroom instead of being refused (017). 30 jobs ≈ 35 min. The
-digest therefore arrives when scoring finishes, not at a fixed 06:05.
+**Throughput is the constraint:** ~67s per scored job, since the pacer waits for token headroom
+instead of being refused (017). The digest arrives when scoring finishes, not at a fixed 06:05.
 
-**LinkedIn: alerts now exist, but no digest has arrived yet.** Utkarsh created job alerts on
-2026-08-12 and the "your job alert has been created" confirmation reached the mailbox — which
-proves both the alert and the forwarding filter work. A confirmation carries no job listings,
-so there is still nothing to write a parser against, and writing one blind means guessing at
-bulk-mail HTML. LinkedIn's first real digest arrives on its own daily schedule; watch
-`alert_unparsed` in `runs.stats.ingest`, then use the `messages.ts` CLI to get the payload.
+**Both alert parsers are live and were written against real mail** — Naukri 2026-08-11,
+LinkedIn 2026-08-16 (016, 020). Between them they are now the main source of jobs: 67 alert
+postings per run against 9 from all 51 ATS boards combined, which is decision 010's coverage
+argument showing up in the numbers.
 
 Not built yet: contacts, drafting, sending. `src/main.ts` still logs those stages as no-ops.
 
@@ -138,38 +142,37 @@ either re-running `node src/gmail/auth.ts` weekly or a Workspace account on an o
 
 ## Next action
 
-**Check that the 06:00 run of 2026-08-14 actually happened**, before building anything else.
-This is the first run from `~/jobagent`; the 08-13 one died on TCC (018a) and its exit-126 is
-still the `runs = 1` in launchd's counter until a new run replaces it.
+**Check the 2026-08-17 06:00 run — it is the first with real volume**, and the first that
+exercises the network gate on a cold morning.
 
 ```
-node src/schedule/launchd.ts --status     # last exit code = 0
-tail -40 logs/daily.log                   # a "── …  start" header, then the whole run
-cat logs/launchd.err                      # stale 08-13 content; anything newer means exec failed
+node src/schedule/launchd.ts --status     # last exit code: 0 ran, 75 = skipped, no network
+tail -60 logs/daily.log                   # "waiting for the network" then ~34 min of scoring
 ```
 
-Read those two logs as answering different questions: an empty `daily.log` with a non-zero exit
-means the wrapper never started and `launchd.err` says why; a populated `daily.log` means it ran
-and the failure is in the pipeline.
+Expect roughly 30 jobs scored and a digest with real matches in it. What to look at:
 
-Four ways it can be quietly dead, in order of likelihood: the laptop was off (launchd catches up
-on wake, so give it a few minutes after login before concluding anything); the repo moved back
-under Desktop/Documents/Downloads and TCC is blocking exec again (018a); macOS disabled the agent
-under System Settings → General → Login Items & Extensions, where `--status` will still say
-`loaded`; or Gmail's token expired, which shows up as `invalid_grant` — see *Blocked on Utkarsh*
-above, where that trap is written down.
-
-If it ran, Phase 1 is closed — update `phases.md`.
+- **`score.scored` in `runs.stats`** should be ~30. Much lower means the run hit
+  `MAX_SCORES_PER_RUN` or the pacer stalled.
+- **Exit 75** means the network never came up in 15 minutes — the laptop was probably shut.
+  Not a bug; the next morning retries. Repeated 75s are a scheduling question, not a
+  networking one.
+- **The old traps**, in order of likelihood: the repo moved back under
+  Desktop/Documents/Downloads (018a); macOS disabled the agent under System Settings →
+  General → Login Items & Extensions, where `--status` still says `loaded`; or Gmail's token
+  expired with `invalid_grant` — see *Blocked on Utkarsh* above.
 
 Then, in order of value:
 
-- **The LinkedIn parser** — only once a real LinkedIn *digest* exists, not just the
-  confirmation email. Watch `alert_unparsed` in `runs.stats.ingest`; when non-zero,
-  `node src/gmail/messages.ts --query="from:linkedin.com" --links --full` gives the payload.
-  Add one entry to `PARSERS` in `src/ingest/gmail-alerts.ts` — nothing else changes.
-- Let scoring run 3 days, then `--distribution` and set the thresholds for real
-  (decision 008). **Split the numbers by source** — ATS postings have a full JD and alert
-  postings have none, so one threshold across both compares unlike things.
+- **The calibration gate, finally unblocked** (008). It needed volume and now there is some:
+  after the 08-17 run, `node src/match/score.ts --distribution`. **Split the numbers by
+  source** — ATS postings carry a full JD, alert postings carry none and are clamped to 82
+  (016), so one threshold across both compares unlike things. `70` / `85` are still guesses.
+- **Watch what LinkedIn's volume does to the run time.** 67 alert postings a run is a lot more
+  than this was designed around; if most survive the title filter, `MAX_SCORES_PER_RUN` (60) at
+  67s each is over an hour. That is the point at which `src/match/embed.ts` — the deferred
+  bge-small prefilter — starts earning its keep, because it is the only lever that cuts the
+  *number* of scoring calls.
 - Phase 2's contact cascade has a new first job: `resolveCompany` returns
   `.unknown.invalid` for nearly every Naukri company (3 of 3 on the first run), because they
   are small firms absent from `candidates.ts`. The cascade must *find* a domain from a name,
