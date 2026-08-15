@@ -38,6 +38,31 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const isRetryable = (status: number) => status === 429 || status >= 500;
 
 /**
+ * Errors that mean "this machine has no network", as opposed to "this board is having a
+ * bad minute". Node reports them on `cause` of the `TypeError: fetch failed` it throws.
+ */
+const OFFLINE_CODES = new Set([
+  'ENOTFOUND', // DNS said no such host — with no resolver, that is every host
+  'EAI_AGAIN', // DNS lookup timed out
+  'ENETDOWN',
+  'ENETUNREACH',
+  'EHOSTUNREACH',
+]);
+
+/**
+ * Retrying a DNS failure is retrying the network, not the board.
+ *
+ * Measured 2026-08-14: launchd started the run before Wi-Fi associated, and 51 boards ×
+ * 3 attempts against a dead resolver took **55 minutes** to arrive at zero jobs. The real
+ * fix is the network gate in `scripts/run-daily.sh`; this is what keeps the cost bounded
+ * when the network drops *during* a run instead of before it.
+ */
+export function isOffline(err: unknown): boolean {
+  const code = (err as { cause?: { code?: string } })?.cause?.code;
+  return code !== undefined && OFFLINE_CODES.has(code);
+}
+
+/**
  * Minimum gap between requests to a given host.
  *
  * Workable's widget API starts returning 429 well before the others do — during the
@@ -111,6 +136,8 @@ export async function getJson<T>(url: string, opts: GetJsonOptions = {}): Promis
     } catch (err) {
       // A non-retryable HttpError is final; network errors and timeouts are not.
       if (err instanceof HttpError) throw err;
+      // ...except being offline, which no amount of retrying this one URL will fix.
+      if (isOffline(err)) throw err;
       lastError = err;
     }
   }

@@ -524,3 +524,55 @@ re-approval each time Homebrew moves node.
 **The tell.** Exit 126 with an empty `logs/daily.log` means the wrapper never ran; the reason
 is in `logs/launchd.err`. A wrapper that runs and fails leaves a timestamped header in
 `daily.log` instead. Those two logs answer different questions, which is why both exist.
+
+---
+
+## 019 — Wait for the network; never retry your way through its absence
+
+**Decision.** `scripts/run-daily.sh` will not start the pipeline until it can reach the
+network, polling every 10s for up to 15 minutes and then **skipping the run** with exit 75
+(`EX_TEMPFAIL`). Separately, `getJson` treats a DNS-level error as final rather than
+retryable (`isOffline` in `src/ingest/http.ts`).
+
+**Why.** The first two scheduled runs, 2026-08-14 and 08-15, both produced zero jobs:
+
+```
+[ingest] source gmail-alert failed: ... getaddrinfo ENOTFOUND oauth2.googleapis.com
+[ingest] greenhouse: 0 kept in 992s
+[ingest] workable: 0 kept in 1863s
+[ingest] done in 3313215ms          ← 55 minutes
+```
+
+launchd runs a missed calendar job when the laptop **wakes**, and Wi-Fi associates a minute
+or two later. Both runs started ~06:12 rather than 06:00, which is the tell. The same ingest
+run by hand with the network up finishes in **38 seconds**.
+
+So the 06:00 run was doing the worst possible thing: 51 boards × 3 attempts against a dead
+resolver, an hour of CPU and battery, and a result — zero new jobs — indistinguishable from a
+quiet morning. Decision 014 keeps the digest silent when nothing matched, which means this
+failure was **completely invisible** from the phone.
+
+**Why skip rather than run anyway.** With no network there is no stage that can do useful
+work: every source is HTTP, Gmail is HTTP, Groq is HTTP. A run that cannot work should not
+write a `runs` row full of failures — the next morning retries it for free (invariant 4).
+
+**Why exit 75 and not 0.** A skipped run and a genuinely quiet morning must not look the same
+in `launchd.ts --status` afterwards. 75 is `EX_TEMPFAIL`: nothing is broken, the conditions
+were wrong.
+
+**Why the check fails open.** A missing `curl` skips the *check*, not the run. A gate whose
+own failure silently cancels the pipeline every morning is worse than the problem it solves.
+
+**Why `isOffline` too, when the gate already exists.** The gate handles a network that is down
+*before* the run; `isOffline` bounds the cost when it drops *during* one. Retrying a DNS
+failure retries the network, not the board — and it is the difference between 55 minutes and
+seconds. Genuinely transient errors (`ECONNRESET`, `ETIMEDOUT`) keep their retries; that
+distinction is what `src/ingest/http.test.ts` pins down.
+
+**Verified through launchd**, not by hand — see 018a for why that is the only test that counts:
+a throwaway agent running `--stage=digest --dry-run` exits 0 with the gate in place, and the
+offline path exits 75 without writing a `runs` row.
+
+**Revisit when.** If runs start being skipped, 15 minutes is the number to raise — but check
+first whether the laptop is simply shut at 06:00, which is a scheduling question, not a
+networking one.
