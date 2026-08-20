@@ -248,10 +248,14 @@ export function atsSource(adapter: BoardAdapter, companies: readonly SeedCompany
       const count = ctx.count ?? (() => {});
 
       for (const batch of chunk(companies, CONCURRENCY)) {
+        if (ctx.signal?.aborted === true) break;
+
         const settled = await Promise.all(
           batch.map(async (company) => {
             try {
-              const payload = await getJson<unknown>(adapter.url(company.slug));
+              const payload = await getJson<unknown>(adapter.url(company.slug), {
+                signal: ctx.signal,
+              });
               if (payload === null) {
                 // 404 = the slug is gone. Normal; refresh-companies prunes these.
                 count(`${adapter.ats}_board_missing`);

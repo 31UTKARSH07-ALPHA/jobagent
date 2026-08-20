@@ -44,6 +44,29 @@ export const DAILY_STAGES = [
   'send',
 ] as const;
 
+/**
+ * Wall-clock budget per stage. A stage that overruns is abandoned and the run moves on.
+ *
+ * Measured on 2026-08-20, with DNS coming and going mid-run: ingest took **33 minutes** to
+ * return nothing, one scoring call took **27**, and the digest — the only stage whose output
+ * anybody sees — ran last, after all of it, and failed. On 08-16 the same pathology delayed
+ * the digest from 07:00 to 13:24 (decision 022).
+ *
+ * A per-request timeout cannot fix this: 51 boards × 3 attempts is within its rights to take
+ * an hour. The budget is what says "this stage has had long enough".
+ *
+ * Numbers are healthy-case times with room to spare: ingest normally finishes in 40 seconds,
+ * and scoring is bounded by `MAX_SCORES_PER_RUN` (60) at ~67s each ≈ 67 minutes, so its
+ * budget has to clear that or a full queue would be cut off mid-run.
+ */
+export const STAGE_BUDGET_MS: Record<string, number> = {
+  ingest: 12 * 60_000,
+  score: 75 * 60_000,
+  digest: 5 * 60_000,
+};
+
+export const DEFAULT_STAGE_BUDGET_MS = 10 * 60_000;
+
 export const STAGES: Record<string, Stage> = {
   ingest: { phase: 1, run: runIngest },
   prefilter: notYet(1, 'bge-small embeddings + cosine top ~30'),
@@ -117,6 +140,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     const bucket: Record<string, number> = {};
     stats[name] = bucket;
 
+    const budgetMs = STAGE_BUDGET_MS[name] ?? DEFAULT_STAGE_BUDGET_MS;
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(new Error(`stage exceeded its ${Math.round(budgetMs / 60_000)} min budget`)),
+      budgetMs,
+    );
+
     const ctx: StageContext = {
       db,
       dryRun,
@@ -124,17 +154,35 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       count: (key, n = 1) => {
         bucket[key] = (bucket[key] ?? 0) + n;
       },
+      signal: controller.signal,
     };
 
     const started = performance.now();
     try {
-      await stage.run(ctx);
+      // A stage that honours `ctx.signal` stops on its own. One stuck in an
+      // uninterruptible call — a hung `getaddrinfo` is the real example — does not, so the
+      // race is what lets the run continue without it. The abandoned promise keeps its own
+      // rejection handler so a late failure cannot take down the process; `node:sqlite` is
+      // synchronous, so it cannot be mid-write when the DB closes.
+      const running = stage.run(ctx);
+      running.catch(() => {});
+
+      await Promise.race([
+        running,
+        new Promise<never>((_, reject) => {
+          controller.signal.addEventListener('abort', () => reject(controller.signal.reason), {
+            once: true,
+          });
+        }),
+      ]);
     } catch (err) {
       // A failed stage never aborts the run — the rows it did not touch stay put and
       // the next run picks them up.
       const message = err instanceof Error ? err.message : String(err);
       errors.push({ stage: StageName.parse(name), message, at: nowIso() });
       console.error(`  [${name}] failed: ${message}`);
+    } finally {
+      clearTimeout(timer);
     }
     ctx.log(`done in ${Math.round(performance.now() - started)}ms`);
   }
@@ -156,5 +204,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 }
 
 if (import.meta.main) {
-  process.exitCode = await main();
+  const code = await main();
+
+  // An abandoned stage keeps its own timers and sockets alive, so the process would sit
+  // there long after the work that matters is done — a hung ingest held a run open for
+  // hours (decision 022). Everything durable is already written: `node:sqlite` is
+  // synchronous and `main` closes the DB before returning, so there is nothing in flight
+  // to truncate. Only the CLI does this; `main()` stays callable from tests.
+  process.exit(code);
 }

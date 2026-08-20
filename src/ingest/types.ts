@@ -46,4 +46,6 @@ export type SourceContext = {
   onError?: (message: string) => void;
   /** Bump a counter that ends up in `runs.stats.ingest`. */
   count?: (key: string, n?: number) => void;
+  /** The stage's deadline. An adapter should stop starting new work once it aborts. */
+  signal?: AbortSignal;
 };

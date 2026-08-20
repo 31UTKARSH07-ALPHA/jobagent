@@ -325,6 +325,15 @@ export async function runScore(ctx: StageContext, deps: ScoreDeps = {}): Promise
   );
 
   for (const job of jobs) {
+    // Each job is a paced Groq call, so the loop is the natural place to give up. Whatever
+    // is already scored stays scored; the rest are still DISCOVERED and cost nothing to
+    // retry tomorrow (invariant 4).
+    if (ctx.signal.aborted) {
+      ctx.log('out of time — remaining jobs stay DISCOVERED for the next run');
+      ctx.count('out_of_time');
+      break;
+    }
+
     try {
       // A score row already here means a previous run died between the insert and the
       // transition. Reuse it rather than paying for the same judgement twice.

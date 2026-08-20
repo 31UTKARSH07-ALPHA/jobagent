@@ -70,6 +70,14 @@ export async function runIngest(ctx: StageContext): Promise<void> {
   };
 
   for (const source of all) {
+    // Out of budget. Stop cleanly rather than starting a source that cannot finish — the
+    // stages after this one, the digest above all, still need their turn.
+    if (ctx.signal.aborted) {
+      ctx.log(`out of time — skipped ${source.name} and any source after it`);
+      ctx.count('source_skipped');
+      break;
+    }
+
     const before = Date.now();
     let fromSource = 0;
 
@@ -77,6 +85,7 @@ export async function runIngest(ctx: StageContext): Promise<void> {
       for await (const raw of source.fetch(since, {
         onError: (message) => ctx.log(`warn: ${message}`),
         count: ctx.count,
+        signal: ctx.signal,
       })) {
         // Companies are upserted outside the batch: several jobs share one company and
         // we need its id before the job row can be written.

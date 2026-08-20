@@ -30,6 +30,8 @@ export type GetJsonOptions = {
   timeoutMs?: number;
   /** Retries on 429/5xx/network errors only. 4xx is never retried. */
   retries?: number;
+  /** The stage's deadline. Combined with `timeoutMs`, whichever fires first. */
+  signal?: AbortSignal;
 };
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -111,13 +113,17 @@ export async function getJson<T>(url: string, opts: GetJsonOptions = {}): Promis
   let backoffMs = 0;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
+    // Out of budget: stop retrying, and do not start another request.
+    if (opts.signal?.aborted === true) throw opts.signal.reason ?? new Error('aborted');
+
     if (attempt > 0) await sleep(backoffMs || 500 * 2 ** (attempt - 1)); // 500ms, 1s
     await pace(host);
 
     try {
+      const timeout = AbortSignal.timeout(timeoutMs);
       const res = await fetch(url, {
         headers: { accept: 'application/json', 'user-agent': USER_AGENT },
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: opts.signal === undefined ? timeout : AbortSignal.any([timeout, opts.signal]),
         redirect: 'follow',
       });
 

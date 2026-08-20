@@ -652,3 +652,63 @@ or `outreach`. Losing an audit trail to tidy up a duplicate is a bad trade.
 
 **Revisit when.** A source starts reusing ids across companies. Nothing observed does; the
 `source` column already separates Greenhouse's "5" from Naukri's "5".
+
+---
+
+## 022 — Bound each stage's time, and retry the send. Refines 019
+
+**Decision.** Two changes, from four days of runs that exited 0 and delivered nothing:
+
+1. **Every stage gets a wall-clock budget** (`STAGE_BUDGET_MS` in `src/main.ts`) and an
+   `AbortSignal` on `StageContext`. A stage that overruns is abandoned; the run continues to
+   the next one and records the overrun in `runs.errors`.
+2. **The Telegram send retries** — four attempts at 2s/8s/32s for transient failures, none at
+   all for 4xx (`src/notify/telegram.ts`).
+
+**Why.** Decision 019's network gate checks once, at the start. On 2026-08-20 it reported
+`network up after 10s` and then DNS went away again mid-run:
+
+```
+[ingest] greenhouse: 9 kept in 5s        ← worked
+[ingest] lever: 0 kept in 975s           ← 16 minutes of nothing
+[ingest] workable: 0 kept in 1013s
+[ingest] source gmail-alert failed: getaddrinfo ENOTFOUND oauth2.googleapis.com
+[ingest] done in 1994205ms               ← 33 minutes
+[score] job 12 failed: fetch failed      ← 27 minutes, for one job
+[digest] failed: fetch failed            ← and then the only part that matters
+```
+
+Four consecutive digests were lost that way (08-17 to 08-20), and on 08-16 the same pathology
+merely delayed one: the run started at 06:08 and finished at **13:24**, so the digest arrived
+over breakfast-plus-six-hours.
+
+**Why a budget rather than better timeouts.** `getJson` already caps each request at 15s and
+`isOffline` (019) stops retrying DNS failures. Neither helps: 51 boards × 3 attempts is
+*entitled* to take an hour, and a hung `getaddrinfo` is not reliably interruptible by
+`AbortSignal` at all. The budget is the only thing that can say "this stage has had long
+enough", and the digest is the reason it must — it runs last and needs the run to still be
+alive when it gets there.
+
+**Why abandon rather than cancel.** A stage that honours `ctx.signal` stops by itself, which
+is why ingest checks it between sources and score checks it between jobs. One stuck in an
+uninterruptible syscall cannot, so `main.ts` stops *waiting* on it and moves on. The
+abandoned promise keeps its own rejection handler, and `node:sqlite` being synchronous means
+it cannot be caught mid-write when the DB closes. The CLI then calls `process.exit`, because
+an abandoned stage's timers and sockets would otherwise hold the process open for as long as
+the thing it was stuck on — which is where the seven-hour run came from.
+
+**Why the score budget is 75 minutes and not 12.** `MAX_SCORES_PER_RUN` is 60 and the pacer
+takes ~67s per job (017), so a full queue is ~67 minutes of legitimate work. A tighter budget
+would cut a busy morning off mid-run and read as a scoring bug. `main.test.ts` asserts this
+relationship rather than the literal number, so changing one forces changing the other.
+
+**Why 4xx is never retried.** Bad HTML in a job title, a revoked token, a wrong chat id: the
+message is wrong, and asking again cannot help. Retrying would only delay the error reaching
+the log. 429 and 5xx are retried.
+
+**Nothing was lost to the four failed digests**, which is the existing design working:
+`digested_at` is set only after Telegram accepts (014), so all 17 matched-but-unreported jobs
+were still queued and went out together on 08-20.
+
+**Revisit when.** Budgets start firing on a healthy network — that means the healthy-case
+times have moved, and the numbers in `STAGE_BUDGET_MS` are stale rather than wrong.
