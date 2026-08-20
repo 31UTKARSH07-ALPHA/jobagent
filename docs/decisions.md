@@ -775,3 +775,65 @@ that can change its mind.
 
 **Revisit when.** The v4 distribution exists — that is the calibration gate (008), still open,
 and now with a score that varies enough to calibrate against.
+
+---
+
+## 024 — Calibration: `MATCH_THRESHOLD` stays 70. Closes 008
+
+**Decision.** Keep `MATCH_THRESHOLD = 70`, now on evidence rather than as a placeholder. The
+v4 distribution across 39 jobs, 2026-08-20:
+
+```
+ 30 ###                            has JD, n=7    range 30-100  avg 56.9
+ 46 #                              title only, n=32  range 47-84  avg 76.3
+ 47 #####
+ 64 #                              at 70: 29 of 39 match
+ 70 ##                             tied at the 84 ceiling: 22 of 39 (56%)
+ 76 #                              v3, for comparison: 30 of 38 tied at 82 (79%)
+ 77 #
+ 78 #
+ 84 ######################
+ 86 #
+100 #
+```
+
+**Why 70 and not higher.** The band it rejects is genuinely junk, and the rejections are the
+right ones — "Intern Engineer", "G - Trainee engineer", "Engineering Intern 3" (Lam Research,
+hardware), "Intern Bios Programming" (GSK). The band it accepts is genuinely plausible: Sony
+Research India, Sanas, Freight Tiger, Enterpret. Moving the line to 75 would gain nothing —
+there is nothing between 70 and 76 — and moving it to 80 would drop the four postings at 76,
+77, 78 that a human would want to see.
+
+**What is still wrong, stated rather than hidden.**
+
+1. **22 of 39 tie at exactly 84.** Better than v3's 30 of 38 at 82, but the digest still
+   orders a 22-way tie by `first_seen_at`, which is arbitrary. This is now
+   *information-limited, not rubric-limited*: "Software Engineering Intern",
+   "Full Stack Developer Intern" and "AI Research Intern" really are equally good matches as
+   far as a title can tell. Squeezing more spread out of that input would be inventing
+   precision. The fix is more evidence, not a finer scale.
+2. **v4 introduces false negatives on bare-but-real titles.** Two examples held back from the
+   first v4 digest:
+
+   ```
+   47  Intern - Engineering        | CoinDCX
+   64  Intern – Kotlin Developer   | SmartQ
+   ```
+
+   CoinDCX is a real engineering shop and that internship is probably a good fit; the title
+   simply does not say so, and the model rated `stack_fit` 0 for the absence. This is the
+   cost of the trade — v3 accepted everything, v4 rejects some things worth having.
+3. **The rubric has no company signal at all.** `domain_fit` rates the *problems*, not the
+   employer. For a title-only posting the company name is the only other evidence available,
+   and a bare "Intern - Engineering" at CoinDCX is worth more than a bare "Intern" at a
+   brewery. `data/companies.json` already knows which companies are engineering companies.
+   **This is the most promising next lever** and it addresses (1) and (2) together — it is
+   also new information rather than a re-weighting of the same inputs.
+4. **`level_fit` does not know about returnships.** "ReStart Consultant (Software Engineering
+   Return...)" scored `level_fit` 10; it is a programme for people re-entering work after a
+   career break, not a student internship. India has several (Amazon Rekindle and similar).
+   One line in the prompt fixes it — deliberately **deferred to the next rubric bump** rather
+   than spending a version and a 40-minute re-score on a single posting.
+
+**Revisit when.** A company signal exists (3), which is a rubric change and therefore v5.
+Re-check the threshold against that distribution rather than assuming 70 carries over.

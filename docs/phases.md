@@ -70,11 +70,14 @@ longer than "the code works" suggested:
 - The digest's silence (014) means **the logs are the only place a dead morning shows up**.
   That is still the right default, but it changes where to look.
 
-### Calibration gate — do not skip
+### Calibration gate — done 2026-08-20 (decision 024)
 
-Run **scoring only for 3 days**, then look at the actual score distribution before
-setting thresholds: `node src/match/score.ts --distribution`. The `70` / `85` values are
-guesses. Record the real numbers in `decisions.md` when you set them.
+`MATCH_THRESHOLD = 70` is now measured rather than guessed: it rejects the right band
+("Intern Engineer", "Trainee engineer", GSK's "Intern Bios Programming") and keeps the right
+one (Sony Research India, Sanas, Freight Tiger, Enterpret). 024 also records what is still
+wrong — a 22-way tie at the 84 ceiling, false negatives on bare-but-real titles like CoinDCX's
+"Intern - Engineering", and no company signal in the rubric at all. Re-check the threshold
+against v5 rather than assuming it carries over.
 
 **Split the distribution by source.** ATS postings arrive with a full job description; alert
 postings arrive with a title and nothing else (decision 016), so the same rubric is working
