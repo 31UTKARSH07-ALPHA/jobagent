@@ -89,35 +89,88 @@ type SendResult = { message_id: number };
  * `disable_web_page_preview` matters more than it looks: without it, a digest of five jobs
  * renders as five link cards and the actual text scrolls off the screen.
  */
+/**
+ * Attempts per message part. The digest is the entire product, and the network on this
+ * laptop at 06:00 comes and goes (decision 022) — four consecutive digests were lost to a
+ * single `fetch failed` before this existed.
+ */
+export const SEND_ATTEMPTS = 4;
+
+/**
+ * 2s, 8s, 32s. Long enough to outlast a Wi-Fi handover, short enough to stay in the run.
+ *
+ * Overridable for the same reason `TELEGRAM_API` is: so the tests can exercise all four
+ * attempts without sleeping 42 seconds to do it.
+ */
+const BACKOFF_BASE_MS = Number(process.env['TELEGRAM_BACKOFF_MS'] ?? 2_000);
+const backoffMs = (attempt: number): number => BACKOFF_BASE_MS * 4 ** (attempt - 1);
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+async function sendPart(
+  config: TelegramConfig,
+  part: string,
+  onRetry?: (message: string) => void,
+): Promise<SendResult> {
+  let last: unknown;
+
+  for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
+    if (attempt > 1) await sleep(backoffMs(attempt - 1));
+
+    try {
+      const res = await fetch(`${API}/bot${config.token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: config.chatId,
+          text: part,
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+        }),
+        signal: AbortSignal.timeout(20_000),
+      });
+
+      const payload = (await res.json()) as {
+        ok: boolean;
+        result?: SendResult;
+        description?: string;
+      };
+
+      if (!res.ok || !payload.ok || payload.result === undefined) {
+        const err = new TelegramError(res.status, payload.description ?? res.statusText);
+        // 4xx means the message itself is wrong — bad HTML, wrong chat id, revoked token.
+        // Sending it again changes nothing, and 429 carries its own wait.
+        if (res.status !== 429 && res.status < 500) throw err;
+        last = err;
+      } else {
+        return payload.result;
+      }
+    } catch (err) {
+      // A malformed message must fail immediately; a dead network is worth another go.
+      if (err instanceof TelegramError && err.status !== 429 && err.status < 500) throw err;
+      last = err;
+    }
+
+    onRetry?.(
+      `telegram attempt ${attempt}/${SEND_ATTEMPTS} failed: ` +
+        (last instanceof Error ? last.message : String(last)),
+    );
+  }
+
+  throw last instanceof Error ? last : new Error(`telegram send failed: ${String(last)}`);
+}
+
 export async function sendMessage(
   config: TelegramConfig,
   text: string,
+  onRetry?: (message: string) => void,
 ): Promise<SendResult[]> {
   const sent: SendResult[] = [];
 
+  // Parts are sent in order and not retried as a group: a digest that got halfway is
+  // reported as a failure, and `digested_at` stays NULL, so tomorrow resends the whole thing.
   for (const part of chunk(text)) {
-    const res = await fetch(`${API}/bot${config.token}/sendMessage`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: config.chatId,
-        text: part,
-        parse_mode: 'HTML',
-        disable_web_page_preview: true,
-      }),
-      signal: AbortSignal.timeout(20_000),
-    });
-
-    const payload = (await res.json()) as {
-      ok: boolean;
-      result?: SendResult;
-      description?: string;
-    };
-
-    if (!res.ok || !payload.ok || payload.result === undefined) {
-      throw new TelegramError(res.status, payload.description ?? res.statusText);
-    }
-    sent.push(payload.result);
+    sent.push(await sendPart(config, part, onRetry));
   }
 
   return sent;

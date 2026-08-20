@@ -67,7 +67,11 @@ export function formatDigest(
 
 /** Injectable so the stage can be tested without a bot token or a network. */
 export type DigestDeps = {
-  send?: (config: TelegramConfig, text: string) => Promise<unknown>;
+  send?: (
+    config: TelegramConfig,
+    text: string,
+    onRetry?: (message: string) => void,
+  ) => Promise<unknown>;
   config?: TelegramConfig;
 };
 
@@ -102,7 +106,12 @@ export async function runDigest(ctx: StageContext, deps: DigestDeps = {}): Promi
   }
 
   const send = deps.send ?? sendMessage;
-  await send(config, text);
+  // Retries are logged rather than swallowed: a digest that needed three attempts still
+  // arrived, but it says the 06:00 network is unreliable, and that belongs in the log.
+  await send(config, text, (m) => {
+    ctx.count('send_retry');
+    ctx.log(m);
+  });
 
   // Only after Telegram has accepted it. A send that throws leaves every job undigested,
   // which is the safe direction: a repeated digest is annoying, a silently dropped job is
