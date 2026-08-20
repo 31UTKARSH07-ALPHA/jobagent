@@ -1,11 +1,12 @@
 # Phases
 
-> **Status: Phase 1 complete.** The 2026-08-14 06:11 run was scheduled, unattended, and put 3
-> matches on Utkarsh's phone. Since then: the 06:00 network gate (019), because three days of
-> runs found nothing while Wi-Fi was still asleep, and the LinkedIn parser (020), because 26
-> real digests finally arrived — alert postings went 6 → 67 in a run. 30 jobs are scored on the
-> next run. **Next: the calibration gate (008), which needed exactly this volume.** Phase 2
-> (contacts, drafts) is unblocked and unstarted.
+> **Status: Phase 1 complete, and the calibration gate with it.** The 2026-08-14 06:11 run was
+> scheduled, unattended, and put 3 matches on Utkarsh's phone. Everything since has been making
+> that trustworthy: the 06:00 network gate (019), per-stage deadlines and a retrying send (022),
+> the LinkedIn parser (020), source-id dedup (021), and rubric v4 (023) — which turned a score
+> that was the constant 82 into one that rejects a brewery internship and keeps Sony Research.
+> Threshold measured and kept at 70 (024). **Next: Phase 2 — contacts and drafts.** One thing
+> blocks the pipeline meanwhile: the Gmail token needs re-authorising, see `agenthandoff.md`.
 > Update this header every time a phase completes. It is the first thing read each session.
 
 Ship each phase end-to-end before starting the next. A working Phase 1 already removes
