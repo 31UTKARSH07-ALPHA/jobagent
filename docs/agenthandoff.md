@@ -13,25 +13,23 @@ Do not restate architecture here. Point at `docs/architecture.md`.
 
 ## Now
 
-**Phase 1 is closed.** The 2026-08-14 06:11 run was scheduled, unattended, exit 0, and reported
-3 matches to Telegram — the criterion, met. 161 tests green, `tsc --noEmit` clean, tree clean,
-all pushed. The repo lives at **`~/jobagent`** and must never move back under Desktop,
-Documents or Downloads (decision 018a).
+**Phase 1 is closed** (2026-08-14 06:11: scheduled, unattended, 3 matches to Telegram).
+171 tests green, `tsc --noEmit` clean. The repo lives at **`~/jobagent`** and must never move
+back under Desktop, Documents or Downloads (018a).
 
-**Then three days of scheduled runs found nothing, and it took reading the logs to notice.**
-Two separate faults, both now fixed, both worth understanding before trusting a green run:
+**Read this before trusting a green run.** Every failure since Phase 1 closed has been silent
+— exit 0, nothing delivered — and each one had a different cause:
 
-1. **No network at 06:00** (019). launchd runs a missed calendar job when the laptop *wakes*,
-   Wi-Fi associates a minute later, and both runs started ~06:12 against a dead resolver: 51
-   boards failed, `getaddrinfo ENOTFOUND oauth2.googleapis.com`, **55 minutes** to reach zero
-   jobs. The same ingest by hand takes 38 seconds. `scripts/run-daily.sh` now waits for the
-   network and skips with exit 75 rather than writing a run of failures.
-2. **The digest's silence hid it** (014). Zero jobs and an hour of failing DNS look identical
-   from the phone. That is still the right default — but it means *the logs are the only place
-   a dead morning shows up*. Check `--status` and `logs/daily.log`, not your Telegram.
+| When | Looked like | Actually was |
+|---|---|---|
+| 08-14, 08-15 | exit 0, no jobs | no network at 06:00; 55 min of DNS timeouts (019) |
+| 08-16 | digest at 13:24 | a stage with no deadline; 7-hour run (022) |
+| 08-17 → 08-20 | exit 0, no digest | one `fetch failed`, no retry (022) |
+| 08-19 → now | `source_failed: 1` | **Gmail token expired — `invalid_grant`** |
+| all of them | 27 of 29 "matched" | the score was the constant 82 (023) |
 
-**LinkedIn is live** (020). 26 digests had piled up as `alert_unparsed`, exactly as intended,
-and there is now a parser written against them. Alert postings went 6 → 67 in one run.
+The digest being silent when nothing matched (014) is still right, but it means **the logs are
+the only place a dead morning shows up**. `--status` and `logs/daily.log`, not your phone.
 
 | Works today | Command |
 |---|---|
@@ -58,10 +56,9 @@ scopes readonly + compose + send. Telegram bot `@utkarsh_jobagent_bot`, token an
 note that Gmail's "Disable forwarding" radio only governs blanket forwarding, so a filter
 forwards regardless of what that radio says.
 
-**39 jobs in the DB: 30 DISCOVERED, 6 MATCHED, 3 REJECTED**, across 33 companies. The 30 are
-unscored and waiting for the next 06:00 run — at ~67s each that is **~34 minutes** of scoring,
-inside `MAX_SCORES_PER_RUN` (60) but the longest run yet. The 9 older jobs carry a rubric **v3**
-score (`min 30, median 82, max 100`); ignore v1 and v2 rows, see below.
+**39 jobs in the DB across 33 companies**, all scored. Rubric **v4** as of 2026-08-20 — ignore
+v1, v2 and v3 rows for calibration (v1 ran at temperature 1.0, v2 predates the title-only
+handling, v3 *is* the flat-82 bug that 023 fixes).
 
 **Throughput is the constraint:** ~67s per scored job, since the pacer waits for token headroom
 instead of being refused (017). The digest arrives when scoring finishes, not at a fixed 06:05.
@@ -77,7 +74,7 @@ Not built yet: contacts, drafting, sending. `src/main.ts` still logs those stage
 
 Nothing. Clean tree, no partial work.
 
-## Read decisions 012–018 before touching the scorer, the digest, the parsers or the schedule
+## Read decisions 012–023 before touching the scorer, the digest, the parsers or the schedule
 
 Things a fresh session would otherwise undo, all measured rather than assumed:
 
@@ -99,12 +96,13 @@ Things a fresh session would otherwise undo, all measured rather than assumed:
   HTML rather than MarkdownV2, because job titles are full of the fifteen characters
   MarkdownV2 makes you escape. Do not "add a daily status ping" here — a dead cron is the
   launchd layer's problem, and a usually-empty message is one you stop reading.
-- **A posting with no description is clamped to 82 max** (016). Alert emails carry no JD, and
-  on the first real run all three Naukri jobs came back 10/10/10/10 → 100, tying Stripe's
-  internship, which had a full JD confirming the match. With nothing to deduct against,
-  nothing gets deducted. `clampToEvidence()` holds `stack_fit`/`domain_fit` to 6, which caps
-  the total below the 85 Phase 3 needs to auto-send: a posting nobody has read cannot mail
-  itself. Do not remove the clamp to "let good jobs score higher".
+- **A missing description discounts the total by 15%, capped at 84 — it does not touch the
+  factor ratings** (023, superseding 016's clamp). Both directions here are load-bearing and
+  were each learned the hard way. Clamping the *factors* to 6 made 31 of 32 alert postings
+  score exactly 82, so the score ranked nothing and 27 of 29 postings "matched". Removing the
+  discount entirely takes you back to 016: three Naukri titles tying Stripe's fully-described
+  internship at 100. The 84 ceiling is what keeps a posting nobody has read out of Phase 3's
+  auto-send band (>85). Store what the model said; discount the result.
 - **Naukri's parser reads the URL slug, not the visible text** (016) — the rendered email
   truncates the company to "Discover Dollar Tec…". Re-verify with the `messages.ts` CLI above
   if it ever returns nothing; the failure mode is silence, not an error.
@@ -128,55 +126,65 @@ Full reasoning in `docs/decisions.md` 010.
 
 ## Blocked on Utkarsh
 
-**Nothing outstanding.** Every credential is in place, and on 2026-08-12 Utkarsh reported
-doing all three of his remaining setup steps: LinkedIn job alerts created (confirmed — the
-confirmation email arrived), OAuth consent screen published, and the Gmail display name set.
+**The Gmail token is expired and job ingest is off.** Since ~2026-08-19:
 
-One thing to verify rather than assume: whether publishing the consent screen actually took.
-`gmail.readonly` is a *restricted* scope, so Google may have held the app unverified. If a run
-ever fails with `invalid_grant`, the 7-day Testing expiry is still in force and the fix is
-either re-running `node src/gmail/auth.ts` weekly or a Workspace account on an own domain
-(already on the later-phases list for deliverability anyway).
+```
+[ingest] source gmail-alert failed: invalid_grant
+```
+
+This is the 7-day Testing-mode expiry, exactly as predicted on 08-12 — so **publishing the
+consent screen did not take**. `gmail.readonly` is a *restricted* scope, so Google may simply
+be holding the app unverified. It matters more than it used to: alert email is **67 of 76
+postings**, against 9 from all 51 ATS boards combined.
+
+Fix now: `node src/gmail/auth.ts` (opens a browser, ~20 seconds). Fix properly: confirm the
+consent screen is really published, or move to a Workspace account on an own domain — already
+on the later-phases list for deliverability anyway.
+
+Worth building either way: nothing told anybody. A dead credential shows up as
+`source_failed: 1` in `runs.stats` and a log line, and the digest is silent by design (014).
+That is the recurring shape of every failure in the table above.
 
 *(Target geography is settled — decision 009.)*
 
 ## Next action
 
-**Check the 2026-08-17 06:00 run — it is the first with real volume**, and the first that
-exercises the network gate on a cold morning.
+**1. Re-authorise Gmail** — `node src/gmail/auth.ts`. Needs Utkarsh; nothing else matters
+while the main job source is off (see *Blocked on Utkarsh*).
 
+**2. Make a broken credential shout.** Every failure in the table above was silent, and this
+is the one class where silence is indefensible: an expired token is not "a quiet morning", it
+is a tool that needs 20 seconds of a human's attention and will otherwise stay dead for weeks.
+Decision 014 forbids a *heartbeat* — a usually-empty daily message you stop reading — and that
+still holds. This is different: a message sent only when a stage or a source fails, and only
+when the previous run did not already report the same thing, so a persistent fault costs one
+message rather than one a day. `runs.errors` and `runs.stats.*_failed` already hold everything
+needed to detect it.
+
+**3. Then the calibration gate** (008), which has been waiting for a score that varies. After
+the v4 re-score: `node src/match/score.ts --distribution`, split by evidence:
+
+```sql
+SELECT CASE WHEN length(j.description) >= 200 THEN 'has JD' ELSE 'title only' END ev,
+       count(*), min(s.fit_score), round(avg(s.fit_score),1), max(s.fit_score)
+  FROM job_scores s JOIN jobs j ON j.id = s.job_id
+ WHERE s.prompt_version = 4 GROUP BY ev;
 ```
-node src/schedule/launchd.ts --status     # last exit code: 0 ran, 75 = skipped, no network
-tail -60 logs/daily.log                   # "waiting for the network" then ~34 min of scoring
-```
 
-Expect roughly 30 jobs scored and a digest with real matches in it. What to look at:
-
-- **`score.scored` in `runs.stats`** should be ~30. Much lower means the run hit
-  `MAX_SCORES_PER_RUN` or the pacer stalled.
-- **Exit 75** means the network never came up in 15 minutes — the laptop was probably shut.
-  Not a bug; the next morning retries. Repeated 75s are a scheduling question, not a
-  networking one.
-- **The old traps**, in order of likelihood: the repo moved back under
-  Desktop/Documents/Downloads (018a); macOS disabled the agent under System Settings →
-  General → Login Items & Extensions, where `--status` still says `loaded`; or Gmail's token
-  expired with `invalid_grant` — see *Blocked on Utkarsh* above.
+`MATCH_THRESHOLD = 70` is still a guess. v4 was designed so that the titles worth having land
+in the high 70s and low 80s and the noise lands in the 40s and 50s, which suggests 70 is about
+right — but check it against the real spread rather than trusting the design.
 
 Then, in order of value:
 
-- **The calibration gate, finally unblocked** (008). It needed volume and now there is some:
-  after the 08-17 run, `node src/match/score.ts --distribution`. **Split the numbers by
-  source** — ATS postings carry a full JD, alert postings carry none and are clamped to 82
-  (016), so one threshold across both compares unlike things. `70` / `85` are still guesses.
-- **Watch what LinkedIn's volume does to the run time.** 67 alert postings a run is a lot more
-  than this was designed around; if most survive the title filter, `MAX_SCORES_PER_RUN` (60) at
-  67s each is over an hour. That is the point at which `src/match/embed.ts` — the deferred
-  bge-small prefilter — starts earning its keep, because it is the only lever that cuts the
-  *number* of scoring calls.
-- Phase 2's contact cascade has a new first job: `resolveCompany` returns
-  `.unknown.invalid` for nearly every Naukri company (3 of 3 on the first run), because they
-  are small firms absent from `candidates.ts`. The cascade must *find* a domain from a name,
-  not assume one exists.
+- **Watch the run time.** 67 alert postings a run is far more than this was built around. At
+  `MAX_SCORES_PER_RUN` (60) × ~67s that is over an hour, which is why `score` gets a 75-minute
+  budget (022). This is the point where `src/match/embed.ts` — the deferred bge-small prefilter
+  — starts earning its keep: it is the only lever that cuts the *number* of scoring calls.
+- **Phase 2's contact cascade**, whose first job is already known: `resolveCompany` returns
+  `.unknown.invalid` for nearly every alert-sourced company, because they are small firms
+  absent from `candidates.ts`. The cascade has to *find* a domain from a name, not assume one
+  exists. With 33 companies now, most of them from email, this is the bulk of the work.
 
 Deliberately deferred:
 - `src/match/embed.ts` — bge-small prefilter. At 5 jobs/day scoring everything is cheaper
