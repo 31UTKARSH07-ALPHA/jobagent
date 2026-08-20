@@ -58,6 +58,10 @@ node src/schedule/launchd.ts --install # (re)write and load the agent; --uninsta
 - **Never ask a model for a 0–100 score.** The scorer rates four factors 0–10 and
   `fitScore()` does the arithmetic. Asked for the number directly, the same posting came
   back 55, 78, 90 and 92 — and `REJECTED` is terminal. Decision 012.
+- **A missing job description costs 15% of the total, never the factor ratings themselves**
+  (decision 023, rubric v4). Clamping `stack_fit`/`domain_fit` to 6 made 31 of 32 alert
+  postings score *exactly* 82 — the score ranked nothing. Store what the model said; discount
+  the result. Title-only tops out at 84, still under the 85 Phase 3 needs to auto-send.
 - Groq is not reproducible even at `temperature: 0` — no seed, batched MoE. Design the
   variance out; do not retry it away.
 - Groq model IDs are **verified against the live `/models` endpoint**, never hard-coded

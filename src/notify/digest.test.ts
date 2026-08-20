@@ -144,13 +144,34 @@ test('rejected jobs never appear, and a rubric bump never hides a match', () => 
 test('a re-scored job is reported once, with its newest score', () => {
   const db = openDb(':memory:');
   const id = seedMatch(db, { fit: 90 });
-  // A rubric bump re-scores it lower. The digest must not show the job twice, and must quote
-  // the new number.
-  insertScore(db, id, PROMPT_VERSION + 1, 62, judgement({ stack_fit: 3 }), 'test-model');
+  // A rubric bump re-scores it lower, but still a match. The digest must not show the job
+  // twice, and must quote the new number.
+  insertScore(db, id, PROMPT_VERSION + 1, 74, judgement({ stack_fit: 6 }), 'test-model');
 
   const items = pendingDigestItems(db);
   assert.equal(items.length, 1, 'one row per job, not one per score');
-  assert.equal(items[0]?.score.fit_score, 62);
+  assert.equal(items[0]?.score.fit_score, 74);
+  db.close();
+});
+
+test('a job the current rubric would reject is not reported at all', () => {
+  // MATCHED is set by whichever rubric was current at the time, and there is no edge back
+  // out of it — REJECTED is terminal by design. So after the v4 rubric change most of a
+  // 33-job backlog sat in MATCHED with scores the new rubric rejects, and reporting those
+  // is the useless-suggestions failure v4 existed to fix (decision 023).
+  const db = openDb(':memory:');
+  const id = seedMatch(db, { fit: 90 });
+  insertScore(db, id, PROMPT_VERSION + 1, 47, judgement({ stack_fit: 0, domain_fit: 0 }), 'test-model');
+
+  assert.deepEqual(pendingDigestItems(db), []);
+  // Still MATCHED, and still not digested: nothing is destroyed, it just stops being
+  // reported. A later rubric that likes it again would pick it straight back up.
+  const row = db.prepare('SELECT state, digested_at FROM jobs WHERE id = ?').get(id) as {
+    state: string;
+    digested_at: string | null;
+  };
+  assert.equal(row.state, 'MATCHED');
+  assert.equal(row.digested_at, null);
   db.close();
 });
 

@@ -6,6 +6,7 @@
  */
 import type { Db } from './db.ts';
 import { Job, JobScore, nowIso } from './schema.ts';
+import { MATCH_THRESHOLD } from '../match/score.ts';
 
 export type DigestItem = {
   job: Job;
@@ -25,7 +26,11 @@ export type DigestItem = {
  * yet reported would stop joining, and would never be reported at all. Taking the latest score
  * per job means a bump changes what the digest *says* about a job, never whether it appears.
  */
-export function pendingDigestItems(db: Db, limit?: number): DigestItem[] {
+export function pendingDigestItems(
+  db: Db,
+  limit?: number,
+  threshold: number = MATCH_THRESHOLD,
+): DigestItem[] {
   const rows = db
     .prepare(
       `SELECT j.*, c.name AS company_name, s.*
@@ -37,10 +42,18 @@ export function pendingDigestItems(db: Db, limit?: number): DigestItem[] {
           AND s.prompt_version = (
             SELECT MAX(prompt_version) FROM job_scores WHERE job_id = j.id
           )
+          -- The newest score has to still agree that this is a match. MATCHED was set by
+          -- whichever rubric was current when the job was scored, and the state machine has
+          -- no edge back out of it: REJECTED is terminal, so there is deliberately no path
+          -- from MATCHED to it. A rubric change therefore leaves jobs sitting in MATCHED
+          -- that the current rubric would reject -- after v4, most of a 33-job backlog --
+          -- and reporting those is exactly the useless-suggestions failure the rubric change
+          -- was made to prevent (decision 023).
+          AND s.fit_score >= ?
         ORDER BY s.fit_score DESC, j.first_seen_at
         ${limit === undefined ? '' : 'LIMIT ?'}`,
     )
-    .all(...(limit === undefined ? [] : [limit])) as Record<string, unknown>[];
+    .all(...(limit === undefined ? [threshold] : [threshold, limit])) as Record<string, unknown>[];
 
   // `SELECT j.*, s.*` collides on job_id/prompt_version only, and both schemas are parsed
   // from the same flat row — Zod ignores the extra keys each one does not want.

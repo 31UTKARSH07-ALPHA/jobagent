@@ -33,7 +33,7 @@ import type { StageContext } from '../stage.ts';
  * kept, so the two distributions can be compared before thresholds are touched
  * (decision 008). Never edit the prompt without bumping it.
  */
-export const PROMPT_VERSION = 3;
+export const PROMPT_VERSION = 4;
 
 /**
  * `fit_score >= MATCH_THRESHOLD` → MATCHED, below → REJECTED (terminal).
@@ -85,8 +85,11 @@ location_fit — can the candidate work this job from India?
   A posting that names a foreign office and never mentions remote is 0, whatever a "remote"
   checkbox elsewhere claims. Location "not stated" with no clue in the description is 6.
 
-If the posting has no description, say so in "reasoning" and rate stack_fit and domain_fit no
-higher than 6 — a title alone is not evidence that a stack matches, only that it might.
+If the posting has no description, say so in "reasoning" and rate stack_fit and domain_fit on
+what the title alone implies — "AI Engineering Intern" is real evidence of an ML stack,
+"Software Development Intern (Full Stack)" of a web one, and a bare "Intern" almost none. Do
+NOT discount your ratings for the missing description: that is handled after you, in
+arithmetic. Rate the title honestly, including low when the title says little.
 
 stack_fit — how much of the posting's core technology has this candidate actually used?
   10  the posting's main languages and tools are the ones they have built with
@@ -136,17 +139,22 @@ const BLOCKED_CEILING = 30;
  * The two gates are the "hard rules" that used to be prose in the prompt. Prose the model
  * agreed with and then ignored; code cannot ignore it.
  */
-export function fitScore(r: ScoreResult): number {
+export function fitScore(r: ScoreResult, titleOnly = false): number {
   const weighted =
     r.level_fit * WEIGHTS.level_fit +
     r.location_fit * WEIGHTS.location_fit +
     r.stack_fit * WEIGHTS.stack_fit +
     r.domain_fit * WEIGHTS.domain_fit;
 
-  const score = Math.round(weighted * 10);
+  let score = Math.round(weighted * 10);
 
-  const blocked =
-    r.level_fit <= BLOCKER_AT_OR_BELOW || r.location_fit <= BLOCKER_AT_OR_BELOW;
+  // No job description: discount the whole result rather than the inputs, so the ratings
+  // still rank postings against each other.
+  if (titleOnly) score = Math.min(Math.round(score * EVIDENCE_PENALTY), TITLE_ONLY_CEILING);
+
+  // Last, because it is a hard ceiling and not a discount: a job that cannot happen must
+  // not be lifted over the threshold by anything.
+  const blocked = r.level_fit <= BLOCKER_AT_OR_BELOW || r.location_fit <= BLOCKER_AT_OR_BELOW;
   return blocked ? Math.min(score, BLOCKED_CEILING) : score;
 }
 
@@ -157,38 +165,36 @@ export function fitScore(r: ScoreResult): number {
 export const MIN_DESCRIPTION_CHARS = 200;
 
 /**
- * Ceiling on `stack_fit` and `domain_fit` when there is no job description.
+ * The evidence discount for a posting with no description, and its hard ceiling.
  *
- * Measured 2026-08-11, the first run with Naukri postings in it: all three came back
- * 10/10/10/10 → **100**, the same score Stripe's internship got with a full JD confirming the
- * match. That is not the model being generous, it is the model being asked an unanswerable
- * question: with only "Python / AI-ML / Full Stack Developer Intern" to go on there is nothing
- * to deduct against, so nothing gets deducted. The score silently stops meaning "good fit" and
- * starts meaning "the title sounds like me".
+ * **This replaces a clamp that flattened the score into a constant.** Decision 016 held
+ * `stack_fit` and `domain_fit` to 6 without a JD, for a good reason: on 2026-08-11 three
+ * Naukri postings came back 10/10/10/10 → 100, tying Stripe's fully-described internship.
  *
- * 6 is chosen for what it does to the arithmetic. A title-only posting tops out at
- * `10·.3 + 10·.25 + 6·.25 + 6·.2` = **82** — comfortably MATCHED, and permanently below the
- * 85 that Phase 3 requires for an auto-send. A posting nobody has read cannot mail itself.
+ * But measured on 2026-08-20 across 32 title-only postings, that clamp had over-corrected
+ * into a flat line — **31 of 32 scored exactly 82**:
+ *
+ *     level 10 · location 10 · stack 6 · domain 6  ->  82   ×31
+ *
+ * An internship title in Bengaluru always earns 10 for level and 10 for location, so with the
+ * other two pinned at 6 the score was arithmetic with no inputs left. It stopped ranking
+ * anything, `MATCH_THRESHOLD` stopped meaning anything, and 27 of 29 postings "matched".
+ * Worse, the clamped 6 was what got *stored*, so the model's real opinion — 9 for "AI
+ * Engineering Intern", 3 for a bare "Intern" — was discarded and cannot be recovered.
+ *
+ * So the discount moves off the factors and onto the total. The model now rates what the
+ * title implies (see SYSTEM) and those ratings are stored as given; the missing description
+ * costs a flat 15% of the result instead of the ability to tell postings apart.
+ *
+ * The ceiling is what decision 016 actually needed. 10/10/10/10 × 0.85 is 85, and Phase 3
+ * auto-sends above 85, so the ceiling sits one point below: a posting nobody has read still
+ * cannot mail itself, which was the point.
  */
-export const TITLE_ONLY_CAP = 6;
+export const EVIDENCE_PENALTY = 0.85;
+export const TITLE_ONLY_CEILING = 84;
 
 export const isTitleOnly = (job: Pick<Job, 'description'>): boolean =>
   job.description.trim().length < MIN_DESCRIPTION_CHARS;
-
-/**
- * Hold the two evidence-dependent factors down to what the evidence supports.
- *
- * A gate in code, not a sentence in the prompt — the prompt says so too, but decision 012
- * established that prose the model agrees with is prose the model then ignores.
- */
-export function clampToEvidence(result: ScoreResult, titleOnly: boolean): ScoreResult {
-  if (!titleOnly) return result;
-  return {
-    ...result,
-    stack_fit: Math.min(result.stack_fit, TITLE_ONLY_CAP),
-    domain_fit: Math.min(result.domain_fit, TITLE_ONLY_CAP),
-  };
-}
 
 /** `level 10 · location 8 · stack 6 · domain 4` — for logs and, later, the digest. */
 export const factorLine = (r: ScoreResult): string =>
@@ -341,12 +347,12 @@ export async function runScore(ctx: StageContext, deps: ScoreDeps = {}): Promise
       const titleOnly = isTitleOnly(job);
       const result = existing
         ? factorsOf(existing)
-        : clampToEvidence(await scorer.score(job, job.company_name, profile), titleOnly);
+        : await scorer.score(job, job.company_name, profile);
 
       if (existing) ctx.count('reused_score');
       if (titleOnly && !existing) ctx.count('title_only');
 
-      const fit = fitScore(result);
+      const fit = fitScore(result, titleOnly);
       const next = stateForScore(fit);
 
       transaction(ctx.db, () => {
@@ -446,8 +452,8 @@ async function rescore(dbPath: string, limit: number): Promise<number> {
 
     try {
       const raw = await groqScorer.score(job, company?.name ?? '(unknown)', profile);
-      const result = clampToEvidence(raw, isTitleOnly(job));
-      const fit = fitScore(result);
+      const result = raw;
+      const fit = fitScore(result, isTitleOnly(job));
       insertScore(db, id, PROMPT_VERSION, fit, result, groqScorer.model);
 
       const was = previous === null ? '—' : `${previous.fit_score} (v${previous.prompt_version})`;

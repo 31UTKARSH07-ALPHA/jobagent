@@ -16,8 +16,8 @@ import {
   MATCH_THRESHOLD,
   MAX_SCORES_PER_RUN,
   PROMPT_VERSION,
-  TITLE_ONLY_CAP,
-  clampToEvidence,
+  EVIDENCE_PENALTY,
+  TITLE_ONLY_CEILING,
   fitScore,
   isTitleOnly,
   jobForPrompt,
@@ -335,30 +335,38 @@ test('a description-free posting is recognised as title-only', () => {
   assert.equal(isTitleOnly({ description: REAL_JD }), false);
 });
 
-test('the clamp holds down only the two factors a title cannot evidence', () => {
-  const perfect = judgement();
-  const clamped = clampToEvidence(perfect, true);
+test('a missing description still ranks postings against each other', () => {
+  // The regression this replaces: clamping stack and domain to 6 made every title-only
+  // posting score exactly 82 — 31 of 32 measured on 2026-08-20 — so the score ranked
+  // nothing and MATCH_THRESHOLD meant nothing (decision 023).
+  const strong = fitScore(judgement({ stack_fit: 9, domain_fit: 9 }), true);
+  const weak = fitScore(judgement({ stack_fit: 2, domain_fit: 2 }), true);
 
-  assert.equal(clamped.stack_fit, TITLE_ONLY_CAP);
-  assert.equal(clamped.domain_fit, TITLE_ONLY_CAP);
-  // Level and location *are* knowable from a title and a city, so they are untouched.
-  assert.equal(clamped.level_fit, 10);
-  assert.equal(clamped.location_fit, 10);
-  // A modest rating is left alone rather than raised to the cap.
-  assert.equal(clampToEvidence(judgement({ stack_fit: 2 }), true).stack_fit, 2);
-  assert.deepEqual(clampToEvidence(perfect, false), perfect, 'a real JD is not clamped');
+  assert.ok(strong > weak + 20, `"AI Engineering Intern" must outrank a bare "Intern": ${strong} vs ${weak}`);
+  assert.ok(strong >= MATCH_THRESHOLD, 'a title that clearly matches is still worth the digest');
+  assert.ok(weak < MATCH_THRESHOLD, 'a title that says nothing is not');
 });
 
 test('a title-only posting can be MATCHED but can never reach the auto-send band', () => {
-  // The measured failure this exists for: on 2026-08-11 all three Naukri postings came back
-  // 10/10/10/10 → 100, the same score Stripe got with a full JD backing it up.
-  const best = fitScore(clampToEvidence(judgement(), true));
-  assert.equal(best, 82, 'the ceiling for a posting nobody has read');
+  // Why the ceiling is 84 and not 85: Phase 3 auto-sends above 85, and 10/10/10/10 × 0.85
+  // lands exactly on it. A posting nobody has read must not be able to mail itself.
+  const best = fitScore(judgement(), true);
+
+  assert.equal(best, TITLE_ONLY_CEILING);
   assert.ok(best >= MATCH_THRESHOLD, 'still worth putting in the digest');
-  assert.ok(best < 85, 'but never auto-sendable — Phase 3 requires >85');
+  assert.ok(best <= 85, 'but never auto-sendable — Phase 3 requires >85');
+  assert.ok(EVIDENCE_PENALTY < 1, 'the discount is a discount');
 });
 
-test('the stage clamps a real alert-shaped job and counts it', async () => {
+test('the same ratings score higher with a description behind them', () => {
+  const ratings = judgement({ stack_fit: 8, domain_fit: 8 });
+  assert.ok(
+    fitScore(ratings, false) > fitScore(ratings, true),
+    'evidence is worth something, which is the whole point of the discount',
+  );
+});
+
+test('the stage stores what the model actually said, not a flattened copy', async () => {
   const db = openDb(':memory:');
   seed(db, ['Python / AI-ML / Full Stack Developer Intern'], '');
 
@@ -367,8 +375,9 @@ test('the stage clamps a real alert-shaped job and counts it', async () => {
   await runScore(ctx, { scorer, profile: PROFILE });
 
   const score = getScore(db, jobIdsInState(db, 'MATCHED')[0] ?? 1, PROMPT_VERSION);
-  assert.equal(score?.stack_fit, TITLE_ONLY_CAP, 'stored clamped, so fit_score matches its factors');
-  assert.equal(score?.fit_score, 82);
+  // v3 stored the clamped 6 here, which threw away the model's real opinion for good.
+  assert.equal(score?.stack_fit, 10, 'the rating is the model, unedited');
+  assert.equal(score?.fit_score, TITLE_ONLY_CEILING, 'the discount lives on the total');
   assert.equal(ctx.counts['title_only'], 1);
   db.close();
 });

@@ -712,3 +712,66 @@ were still queued and went out together on 08-20.
 
 **Revisit when.** Budgets start firing on a healthy network — that means the healthy-case
 times have moved, and the numbers in `STAGE_BUDGET_MS` are stale rather than wrong.
+
+---
+
+## 023 — Discount the total, not the ratings. Supersedes the clamp in 016
+
+**Decision.** Rubric **v4**. A posting with no description keeps the model's real
+`stack_fit` / `domain_fit` ratings, and the missing evidence costs a flat **15% of the
+total**, hard-capped at **84** (`EVIDENCE_PENALTY`, `TITLE_ONLY_CEILING`). The prompt now
+asks the model to rate what the title implies rather than to hold itself to 6. And
+`pendingDigestItems` filters on the newest score, not only on the state.
+
+**Why.** Decision 016's clamp was right about the problem and wrong about the cure. Measured
+2026-08-20 across 32 title-only postings:
+
+```
+level 10 · location 10 · stack 6 · domain 6  ->  82   ×31
+level 10 · location 10 · stack 3 · domain 3  ->  69   ×1
+```
+
+An internship title in Bengaluru always earns 10 for level and 10 for location. With the
+other two pinned at 6, the score was arithmetic with no inputs left — **31 of 32 identical**.
+So `MATCH_THRESHOLD` stopped meaning anything (27 of 29 postings "matched"), and the digest
+became a list of every internship-titled posting in India rather than a ranked shortlist. The
+JD-backed postings, for contrast, spread properly: 28, 30, 30, 46, 76, 92, 100.
+
+**The clamp also destroyed evidence.** The clamped 6 was what got *stored*, so the model's
+actual opinion — 9 for "AI Engineering Intern", 3 for a bare "Intern" — was gone. That is why
+v4 needs a full re-score rather than a recomputation: the inputs were never kept.
+
+**What the new arithmetic does**, on real titles from the DB:
+
+```
+82  MATCHED   AI Engineering Intern (SpotDraft)
+77  MATCHED   Back End Developer - Intern (Janitri)
+76  MATCHED   Software Development Intern (Full Stack)
+60  rejected  Engineering Intern 3 (Lam Research)
+53  rejected  Intern (KLING BREWERY)
+49  rejected  Intern Bios Programming (GSK)
+47  rejected  Technology Intern (a wedding company)
+```
+
+**Why 84 and not 85.** Phase 3 auto-sends above 85, and 10/10/10/10 × 0.85 lands exactly on
+85. The ceiling sits one point below it, so 016's real requirement survives intact: a posting
+nobody has read cannot mail itself.
+
+**Why the prompt had to change too.** It carried the same instruction as the code — "rate
+stack_fit and domain_fit no higher than 6" — so leaving it would have reproduced the flat line
+with the clamp removed. It now asks for an honest read of the title, explicitly including a
+low one, and says the discount is applied afterwards.
+
+**Why the digest now checks the score.** `MATCHED` is written by whichever rubric was current,
+and the state machine has no edge back out of it — `REJECTED` is terminal, deliberately. A
+rubric change therefore strands jobs in `MATCHED` that the new rubric rejects; after v4 that
+was most of a 33-job backlog, and reporting them would have been precisely the useless-
+suggestions failure v4 exists to prevent. Nothing is destroyed: the rows keep their state and
+their NULL `digested_at`, so a later rubric that likes them again picks them straight back up.
+
+**Deliberately not done.** No path from `MATCHED` back to `REJECTED`. Terminal states stay
+terminal; filtering at the point of reporting gets the same outcome without a state machine
+that can change its mind.
+
+**Revisit when.** The v4 distribution exists — that is the calibration gate (008), still open,
+and now with a score that varies enough to calibrate against.
