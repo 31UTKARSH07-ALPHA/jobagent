@@ -20,6 +20,7 @@ import type { Stage, StageContext } from './stage.ts';
 import { runIngest } from './ingest/index.ts';
 import { runScore } from './match/score.ts';
 import { runDigest } from './notify/digest.ts';
+import { reportFaults } from './notify/health.ts';
 
 export type { Stage, StageContext };
 
@@ -158,6 +159,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       count: (key, n = 1) => {
         bucket[key] = (bucket[key] ?? 0) + n;
       },
+      fault: (message) => {
+        errors.push({ stage: StageName.parse(name), message, at: nowIso() });
+        console.error(`  [${name}] ${message}`);
+      },
       signal: controller.signal,
     };
 
@@ -192,6 +197,14 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   }
 
   finishRun(db, runId, stats, errors);
+
+  // After `finishRun`, so what is reported is exactly what was recorded, and after every
+  // stage, so one message covers the whole run. Silent when nothing is newly broken — that is
+  // what makes it different from the status ping decision 014 refused.
+  await reportFaults(db, runId, errors, {
+    dryRun,
+    log: (m) => console.log(`  [health] ${m}`),
+  });
 
   const counts = stateCounts(db);
   console.log(

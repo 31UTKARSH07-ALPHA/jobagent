@@ -14,6 +14,16 @@ export type StageContext = {
   /** Counters merged into `runs.stats` under this stage's name. */
   count: (key: string, n?: number) => void;
   /**
+   * Record something that went wrong without failing the stage — a dead source, an expired
+   * credential — into `runs.errors`.
+   *
+   * `log` is not enough and a counter is not enough. A counter says *how many*, and
+   * `source_failed: 1` was all the DB knew while Gmail's token sat expired for four days
+   * (decision 026). This carries the identity of the fault, which is what lets the health
+   * check tell a new problem from yesterday's.
+   */
+  fault: (message: string) => void;
+  /**
    * Aborts when the stage runs out of its wall-clock budget (`STAGE_BUDGET_MS` in
    * `main.ts`). Pass it to every network call and check it between units of work.
    *

@@ -912,3 +912,56 @@ the next. When adding a limit, check what it makes the *new* bottleneck.
 **Measured after.** A full `--dry-run` pipeline: **30 seconds**, with alert email attempted
 first, all four ATS adapters polled, and the digest rendered. Lever, Ashby and Workable still
 fail from this network at times, and now cost seconds rather than a morning.
+
+---
+
+## 026 — A failure alert, which is not the status ping 014 refused
+
+**Decision.** `src/notify/health.ts` sends one Telegram message when something is **newly**
+broken, and nothing otherwise. `StageContext` gains `fault(message)` so a stage can record a
+non-fatal problem with its identity attached; `runIngest` uses it for a dead source. Called
+from `main.ts` after `finishRun`, so one message covers the whole run.
+
+**Why, when 014 said no.** 014 refused a *heartbeat* — a daily "all fine" you stop reading,
+and which is then worse than nothing because it looks like coverage. That reasoning holds. But
+014 also said "a dead cron is the launchd layer's problem", and three weeks of evidence says
+that layer cannot see most of what breaks:
+
+| Broken | Found | How |
+|---|---|---|
+| no network at 06:00 | 2 days later | reading logs |
+| no stage deadline (7-hour run) | 4 days later | reading logs |
+| digest could not send | 4 days later | reading logs |
+| **Gmail token expired** | **4 days later** | reading logs |
+| the score was a constant 82 | 2 weeks later | reading the DB by hand |
+
+Every one exited 0. Every one was recorded perfectly. Nobody looked, because looking requires
+suspecting — and the digest's silence when nothing matched (014, still correct) makes a dead
+morning and a quiet one identical from the phone.
+
+**What makes it not a heartbeat.** It is silent on a healthy run, and silent on an *unhealthy*
+run whose faults were already reported. A credential expired for a fortnight costs **one**
+message. So the message arriving means something new happened, which is the only property that
+makes an alert worth reading.
+
+**The dedupe compares fault identity, not text.** `signature()` strips digits, so "exceeded
+its 12 min budget" and "exceeded its 8 min budget" are one ongoing problem rather than two,
+and a message carrying a job id does not re-alert every morning. It keys on the stage too: the
+same words from `ingest` and from `digest` are different problems.
+
+**Dry runs are excluded from the baseline.** A `--dry-run` in the afternoon must not silence
+the next morning's real alert.
+
+**Why `fault()` rather than a counter.** `source_failed: 1` was all the DB knew while Gmail
+sat expired — a count says how many, never which or why. `fault()` carries the message, so the
+alert can say `invalid_grant` and name the command that fixes it.
+
+**It never throws.** It runs at the very end of the pipeline, and a failure to report a failure
+must not become the thing that breaks the run.
+
+**Deliberately not done.** No "recovered" message. The next digest full of new jobs is the
+recovery signal, and a second message class doubles what there is to get wrong.
+
+**Verified against the real thing:** a healthy ingest run reports nothing; the same run with
+`GOOGLE_TOKEN_PATH` pointed at a missing file produces the alert, with `run: node
+src/gmail/auth.ts` already in the text.

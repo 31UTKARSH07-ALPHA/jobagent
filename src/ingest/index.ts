@@ -124,8 +124,13 @@ export async function runIngest(ctx: StageContext): Promise<void> {
     } catch (err) {
       // One source dying must not cost us the others.
       flush();
-      ctx.log(`source ${source.name} failed: ${err instanceof Error ? err.message : String(err)}`);
       ctx.count('source_failed');
+      // `fault` rather than `log`, and with the reason attached: `source_failed: 1` was all
+      // the DB knew while Gmail's token sat expired for four days (decision 026). It logs
+      // too, so the line in daily.log is unchanged.
+      ctx.fault(
+        `source ${source.name} failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
 
     ctx.log(`${source.name}: ${fromSource} kept in ${Math.round((Date.now() - before) / 1000)}s`);

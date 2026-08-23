@@ -96,6 +96,7 @@ function context(db: Db): StageContext & { counts: Record<string, number> } {
     dryRun: false,
     // Never aborts: these tests are not about the stage budget.
     signal: new AbortController().signal,
+    fault: () => {},
     log: () => {},
     count: (key, n = 1) => {
       counts[key] = (counts[key] ?? 0) + n;
