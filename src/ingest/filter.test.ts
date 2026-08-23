@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isEarlyCareerTechRole, matchesGeography } from './filter.ts';
+import { isEarlyCareerTechRole, matchesGeography , isUnpaid} from './filter.ts';
 import { htmlToText, decodeEntities } from './html.ts';
 
 test('keeps early-career technical roles', () => {
@@ -92,4 +92,23 @@ test('html: script and style content is removed', () => {
 
 test('html: empty input stays empty', () => {
   assert.equal(htmlToText(''), '');
+});
+
+test('a posting that says it does not pay is dropped', () => {
+  // Both of these matched and reached the digest queue on 2026-08-23 (decision 027). The
+  // scorer had no reason to catch them: the role genuinely fits the stack.
+  assert.equal(isEarlyCareerTechRole('Frontend Web Developer Antigravity Intern- NON PAID'), false);
+  assert.equal(isEarlyCareerTechRole('6-Month Unpaid Internship — Forward-Deployed Engineer'), false);
+  assert.equal(isUnpaid('Software Intern (unpaid)'), true);
+  assert.equal(isUnpaid('Backend Intern - non-paid'), true);
+  assert.equal(isUnpaid('Intern, no stipend'), true);
+});
+
+test('silence about money is not a claim about money', () => {
+  // Deliberately narrow: most paid internships simply never mention pay, and reading a
+  // missing salary as "unpaid" would drop nearly everything.
+  assert.equal(isUnpaid('Software Engineering Intern'), false);
+  assert.equal(isUnpaid('Backend Intern — stipend as per company norms'), false);
+  assert.equal(isUnpaid('Paid Software Internship'), false);
+  assert.equal(isEarlyCareerTechRole('Software Engineering Intern'), true, 'the normal case still passes');
 });

@@ -7,6 +7,7 @@
 import type { Db } from './db.ts';
 import { Job, JobScore, nowIso } from './schema.ts';
 import { MATCH_THRESHOLD } from '../match/score.ts';
+import { isUnpaid } from '../ingest/filter.ts';
 
 export type DigestItem = {
   job: Job;
@@ -50,18 +51,31 @@ export function pendingDigestItems(
           -- and reporting those is exactly the useless-suggestions failure the rubric change
           -- was made to prevent (decision 023).
           AND s.fit_score >= ?
-        ORDER BY s.fit_score DESC, j.first_seen_at
+        -- Newest first within a tie, which is the opposite of what this used to do.
+        -- 57 of 90 v4 scores land on exactly 84 (024), and with a 46-job backlog against
+        -- MAX_ITEMS_PER_DIGEST of 10 that tie decides five days of digests. Oldest-first sent
+        -- a posting found today to the back of that queue — and an internship found five days
+        -- ago may well be closed (decision 027).
+        ORDER BY s.fit_score DESC, j.first_seen_at DESC
         ${limit === undefined ? '' : 'LIMIT ?'}`,
     )
     .all(...(limit === undefined ? [threshold] : [threshold, limit])) as Record<string, unknown>[];
 
   // `SELECT j.*, s.*` collides on job_id/prompt_version only, and both schemas are parsed
   // from the same flat row — Zod ignores the extra keys each one does not want.
-  return rows.map((row) => ({
-    job: Job.parse(row),
-    company: String(row['company_name']),
-    score: JobScore.parse(row),
-  }));
+  return (
+    rows
+      .map((row) => ({
+        job: Job.parse(row),
+        company: String(row['company_name']),
+        score: JobScore.parse(row),
+      }))
+      // Unpaid postings are rejected at ingest from now on, but the ones already stored have
+      // to be held back too, and REJECTED is terminal so their state cannot be walked back
+      // (027). Filtered here rather than in SQL so `isUnpaid` stays the only definition —
+      // SQLite has no REGEXP, and a LIKE list would be a second, drifting copy.
+      .filter((item) => !isUnpaid(item.job.title))
+  );
 }
 
 /** Mark jobs as reported. Called only after the message is actually out. */

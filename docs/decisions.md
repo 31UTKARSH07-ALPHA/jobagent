@@ -965,3 +965,46 @@ recovery signal, and a second message class doubles what there is to get wrong.
 **Verified against the real thing:** a healthy ingest run reports nothing; the same run with
 `GOOGLE_TOKEN_PATH` pointed at a missing file produces the alert, with `run: node
 src/gmail/auth.ts` already in the text.
+
+---
+
+## 027 — Freshest first, and no unpaid postings
+
+**Decision.** Two changes to what reaches the phone:
+
+1. `pendingDigestItems` orders `fit_score DESC, first_seen_at **DESC**` — newest first within
+   a tie, the opposite of before.
+2. `isUnpaid` in `src/ingest/filter.ts` drops postings that say in their own title that they
+   do not pay. Applied at ingest for new postings, and in the digest query for ones already
+   stored.
+
+**Why the ordering was actively harmful.** 57 of 90 v4 scores land on exactly 84 (024), so
+within that tie the *tiebreak* decides what Utkarsh reads. With 46 matches queued against
+`MAX_ITEMS_PER_DIGEST` of 10, that is five days of digests. Oldest-first sent a posting found
+this morning to the back of that queue — and an internship found five days ago may well be
+closed. For a job hunt, staleness is the cost that matters; between two postings the scorer
+cannot separate, the newer one is strictly the better bet.
+
+**Why unpaid postings need a filter and not a lower score.** "Frontend Web Developer
+Antigravity Intern- NON PAID" scored **78** and "6-Month Unpaid Internship — Forward-Deployed
+Engineer" scored **70**. Both are correct scores: the *role* genuinely matches the stack, which
+is all the rubric is asked about. Pay is a different question, the answer is sitting in the
+title, and a regex is cheaper and more reliable than teaching the rubric about money.
+
+`UNPAID_TITLE` is deliberately narrow — only an explicit statement counts. Most paid
+internships never mention pay, so reading a missing salary as "unpaid" would drop nearly
+everything.
+
+**Why the digest filters as well as ingest.** Ingest stops new ones. The two already stored are
+`MATCHED`, and `REJECTED` is terminal so there is no legal way back (023's reasoning). The
+filter runs in JS rather than SQL so `isUnpaid` stays the single definition: SQLite has no
+`REGEXP`, and a `LIKE` list would be a second copy that drifts.
+
+**The trade this creates, stated rather than discovered later.** Newest-first starves the tail
+the way oldest-first starved the head. Sony Research India's AI Research Intern — a posting
+worth having — is now behind five days of newer 84s, and if daily intake keeps pace with
+`MAX_ITEMS_PER_DIGEST` it may never be sent. That is the better failure of the two, because the
+starved end is the end most likely to be closed anyway. But it is a real cost, and the honest
+fix is not a third ordering: it is either a bigger digest, or a queue that **expires** unsent
+matches after about a week instead of pretending they will get their turn. **Not settled — see
+`agenthandoff.md`.**

@@ -37,10 +37,27 @@ export const TECHNICAL_TITLE =
 export const NON_ENGINEERING_TITLE =
   /\b(sales|policy|marketing|recruit(ing|er)?|talent|legal|counsel|finance|accounting|hr|people ops|communications|content|copywrit\w*|customer (success|support|experience)|business development|partnerships|procurement|supply chain|advocate|evangelist)\b/i;
 
+/**
+ * Postings that say in their own title that they do not pay.
+ *
+ * Two reached the digest on 2026-08-23 — "Frontend Web Developer Antigravity Intern- NON
+ * PAID" scored 78 and "6-Month Unpaid Internship — Forward-Deployed Engineer" scored 70. The
+ * scorer has no reason to catch these: the role genuinely matches the stack. The word is
+ * right there in the title, so this is the cheapest filter in the file (decision 027).
+ *
+ * Deliberately narrow — only an explicit statement counts. "Stipend" and a missing salary say
+ * nothing either way, and a paid internship that merely fails to mention money is the common
+ * case.
+ */
+export const UNPAID_TITLE = /\b(un[\s-]?paid|non[\s-]?paid|without stipend|no stipend)\b/i;
+
+export const isUnpaid = (title: string): boolean => UNPAID_TITLE.test(title);
+
 export function isEarlyCareerTechRole(title: string): boolean {
   if (!TECHNICAL_TITLE.test(title)) return false;
   if (NON_ENGINEERING_TITLE.test(title)) return false;
   if (SENIOR_TITLE.test(title)) return false;
+  if (isUnpaid(title)) return false;
   return EARLY_CAREER_TITLE.test(title);
 }
 
