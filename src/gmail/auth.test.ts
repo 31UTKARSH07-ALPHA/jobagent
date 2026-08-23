@@ -119,3 +119,14 @@ test('a written token is not world-readable', () => {
   writeFileSync(path, JSON.stringify({ refresh_token: '1//x' }), { mode: 0o600 });
   assert.equal(statSync(path).mode & 0o077, 0, 'no group or other permissions');
 });
+
+test('the advice in an auth error names a command that actually re-authorises', () => {
+  // The loop this guards against, reported 2026-08-23: `node src/gmail/auth.ts` found a dead
+  // token, printed describeAuthError — which ends "re-run: node src/gmail/auth.ts" — and
+  // returned without doing anything. The advice was circular, and the only way out was
+  // knowing about --force. `main` now falls through to a fresh authorisation, so the
+  // sentence has to keep pointing at the bare command for it to stay true.
+  const advice = describeAuthError(Object.assign(new Error('invalid_grant'), { message: 'invalid_grant' }));
+  assert.match(advice, /node src\/gmail\/auth\.ts/);
+  assert.doesNotMatch(advice, /--force/, 'the bare command must be enough; --force is for a healthy token');
+});

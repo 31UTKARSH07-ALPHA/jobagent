@@ -312,9 +312,18 @@ async function main(argv: string[]): Promise<number> {
 
   if (hasToken() && !argv.includes('--force')) {
     console.log(`${TOKEN_PATH} already exists. Checking it…\n`);
-    const code = await status();
-    if (code === 0) console.log('\nNothing to do. Re-authorise anyway with --force.');
-    return code;
+
+    if ((await status()) === 0) {
+      console.log('\nNothing to do. Re-authorise anyway with --force.');
+      return 0;
+    }
+
+    // A token that exists but no longer works is *the* reason to run this command, so do
+    // the thing rather than describing it. This used to return here, and because
+    // `describeAuthError` ends with "re-run: node src/gmail/auth.ts", the command told you
+    // to run the command you had just run — a loop with no way out except knowing about
+    // `--force`. Reported 2026-08-23.
+    console.log('\nThat token no longer works, so re-authorising now.\n');
   }
 
   try {
