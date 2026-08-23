@@ -5,8 +5,11 @@
 > that trustworthy: the 06:00 network gate (019), per-stage deadlines and a retrying send (022),
 > the LinkedIn parser (020), source-id dedup (021), and rubric v4 (023) — which turned a score
 > that was the constant 82 into one that rejects a brewery internship and keeps Sony Research.
-> Threshold measured and kept at 70 (024). **Next: Phase 2 — contacts and drafts.** One thing
-> blocks the pipeline meanwhile: the Gmail token needs re-authorising, see `agenthandoff.md`.
+> Threshold measured and kept at 70 (024), and 025 closed the holes those earlier fixes left —
+> a gate that trusted one host, and a budget that starved the best source. **Next: Phase 2 —
+> contacts and drafts.** Two things first, both in `agenthandoff.md`: the Gmail token needs
+> re-authorising (no new jobs since 08-19), and a broken credential needs to be able to shout,
+> because five separate failures have now gone unnoticed for days at a time.
 > Update this header every time a phase completes. It is the first thing read each session.
 
 Ship each phase end-to-end before starting the next. A working Phase 1 already removes

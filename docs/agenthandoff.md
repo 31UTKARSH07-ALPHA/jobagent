@@ -18,18 +18,26 @@ Do not restate architecture here. Point at `docs/architecture.md`.
 back under Desktop, Documents or Downloads (018a).
 
 **Read this before trusting a green run.** Every failure since Phase 1 closed has been silent
-— exit 0, nothing delivered — and each one had a different cause:
+— exit 0, nothing delivered — and each fix exposed the next one:
 
 | When | Looked like | Actually was |
 |---|---|---|
 | 08-14, 08-15 | exit 0, no jobs | no network at 06:00; 55 min of DNS timeouts (019) |
-| 08-16 | digest at 13:24 | a stage with no deadline; 7-hour run (022) |
+| 08-16 | digest at 13:24 | no stage deadline; 7-hour run (022) |
 | 08-17 → 08-20 | exit 0, no digest | one `fetch failed`, no retry (022) |
-| 08-19 → now | `source_failed: 1` | **Gmail token expired — `invalid_grant`** |
+| 08-19 → **now** | `source_failed: 1` | **Gmail token expired — still unfixed, needs Utkarsh** |
 | all of them | 27 of 29 "matched" | the score was the constant 82 (023) |
+| 08-21 → 08-23 | exit 0, no digest | the gate trusted one host; the budget starved the best source (025) |
 
-The digest being silent when nothing matched (014) is still right, but it means **the logs are
-the only place a dead morning shows up**. `--status` and `logs/daily.log`, not your phone.
+**The lesson that keeps repeating** (025): each fix bounded whatever had just failed without
+asking what would fail *first* once it was bounded. A budget without an ordering starves the
+tail. A gate on one host says nothing about the next. When adding a limit, work out what it
+makes the new bottleneck.
+
+**And the reason none of it was noticed for a week:** the digest is silent when nothing
+matched (014), so a dead morning and a quiet one look identical from the phone. That default
+is still right, but it means **the logs are the only place a failure shows up** — `--status`
+and `logs/daily.log`. Making a broken *credential* shout is the top item under *Next action*.
 
 | Works today | Command |
 |---|---|
@@ -74,7 +82,7 @@ Not built yet: contacts, drafting, sending. `src/main.ts` still logs those stage
 
 Nothing. Clean tree, no partial work.
 
-## Read decisions 012–023 before touching the scorer, the digest, the parsers or the schedule
+## Read decisions 012–025 before touching the scorer, the digest, the parsers or the schedule
 
 Things a fresh session would otherwise undo, all measured rather than assumed:
 
@@ -109,6 +117,20 @@ Things a fresh session would otherwise undo, all measured rather than assumed:
 - **The digest takes each job's newest score, never a pinned `PROMPT_VERSION`.** Pinning
   looked tidier and dropped already-matched-but-unreported jobs from the digest forever on
   the first rubric bump.
+- **Sources are polled best-first and each gets 3 minutes** (025). Alert email leads because
+  it is 67 of 76 postings and takes 23 seconds; it was last, and got starved on three
+  consecutive mornings by five Lever boards that were not answering. Do not reorder for
+  tidiness, and do not remove `SOURCE_BUDGET_MS` — a stage budget alone says when to stop, not
+  who got the time.
+- **The network gate checks Telegram, Groq *and* Google** (025), because on 2026-08-23 DNS
+  resolved `oauth2.googleapis.com` in 10 seconds while `api.lever.co` hung for 1048. One host
+  proves nothing about the next. Board hosts are excluded on purpose: a dead ATS is normal.
+  `curl --max-time` is used rather than node because node's `AbortSignal.timeout` does **not**
+  interrupt a stuck `getaddrinfo` — that is the whole reason a 15s request timeout became a
+  17-minute source.
+- **`STAGE_BUDGET_MS['digest']` must exceed the send's worst case** (025). Four attempts × a
+  20s timeout plus the 2+8+32s ladder is ~122s per message part, and a ten-match digest is two
+  or three parts. At 5 minutes the budget was killing the retries it existed to permit.
 - **The plist is generated, never committed** (018), because every path in it is specific to
   this laptop. `--print` shows exactly what `--install` writes. Do not hand-edit the installed
   file — `--install` overwrites it. And `RunAtLoad` stays `false`: loading the agent must not
@@ -149,42 +171,37 @@ That is the recurring shape of every failure in the table above.
 
 ## Next action
 
-**1. Re-authorise Gmail** — `node src/gmail/auth.ts`. Needs Utkarsh; nothing else matters
-while the main job source is off (see *Blocked on Utkarsh*).
+**1. Re-authorise Gmail — still not done, and it is now the only thing stopping new jobs.**
 
-**2. Make a broken credential shout.** Every failure in the table above was silent, and this
-is the one class where silence is indefensible: an expired token is not "a quiet morning", it
-is a tool that needs 20 seconds of a human's attention and will otherwise stay dead for weeks.
-Decision 014 forbids a *heartbeat* — a usually-empty daily message you stop reading — and that
-still holds. This is different: a message sent only when a stage or a source fails, and only
-when the previous run did not already report the same thing, so a persistent fault costs one
-message rather than one a day. `runs.errors` and `runs.stats.*_failed` already hold everything
-needed to detect it.
-
-**3. Then the calibration gate** (008), which has been waiting for a score that varies. After
-the v4 re-score: `node src/match/score.ts --distribution`, split by evidence:
-
-```sql
-SELECT CASE WHEN length(j.description) >= 200 THEN 'has JD' ELSE 'title only' END ev,
-       count(*), min(s.fit_score), round(avg(s.fit_score),1), max(s.fit_score)
-  FROM job_scores s JOIN jobs j ON j.id = s.job_id
- WHERE s.prompt_version = 4 GROUP BY ev;
+```
+node src/gmail/auth.ts      # opens a browser, ~20 seconds
 ```
 
-`MATCH_THRESHOLD = 70` is still a guess. v4 was designed so that the titles worth having land
-in the high 70s and low 80s and the noise lands in the 40s and 50s, which suggests 70 is about
-right — but check it against the real spread rather than trusting the design.
+Failing since ~08-19 with `invalid_grant`, so **no new postings have entered the DB in four
+days**. Alert email is 67 of 76 postings. Also confirm the consent screen is genuinely
+published in Google Cloud Console: the 7-day Testing expiry firing at all says it is not, and
+`gmail.readonly` being a restricted scope means Google may be holding the app unverified.
 
-Then, in order of value:
+**2. Make a broken credential shout.** This is the same failure five times over: the tool
+breaks, `runs.errors` and `runs.stats.*_failed` record it perfectly, and nobody looks. 014
+forbids a *heartbeat* — a usually-empty daily message you stop reading — and that still holds.
+This is the opposite: a message sent **only** when a stage or source fails, and only when the
+previous run did not already report the same fault, so a persistent problem costs one message
+rather than one a day. Everything needed is already in `runs`.
 
-- **Watch the run time.** 67 alert postings a run is far more than this was built around. At
-  `MAX_SCORES_PER_RUN` (60) × ~67s that is over an hour, which is why `score` gets a 75-minute
-  budget (022). This is the point where `src/match/embed.ts` — the deferred bge-small prefilter
-  — starts earning its keep: it is the only lever that cuts the *number* of scoring calls.
-- **Phase 2's contact cascade**, whose first job is already known: `resolveCompany` returns
-  `.unknown.invalid` for nearly every alert-sourced company, because they are small firms
-  absent from `candidates.ts`. The cascade has to *find* a domain from a name, not assume one
-  exists. With 33 companies now, most of them from email, this is the bulk of the work.
+**3. Phase 2 — contacts and drafts.** Unblocked, unstarted, and the largest remaining piece.
+Its first problem is already known: `resolveCompany` returns `.unknown.invalid` for nearly
+every alert-sourced company, because they are small firms absent from `candidates.ts`. With 33
+companies now, most from email, the cascade has to *find* a domain from a name rather than
+assume one exists.
+
+**4. The company signal in the rubric** (024's conclusion). A bare "Intern - Engineering" at
+CoinDCX is worth more than a bare "Intern" at a brewery, and `data/companies.json` already
+knows the difference. It is the one change that would fix both remaining scoring weaknesses —
+the 22-way tie at 84 and the false negatives on bare-but-real titles — because it adds
+information rather than re-weighting what is already there. Fold in the returnship fix
+(`level_fit` rated a "ReStart Consultant" career-break programme as a student internship) so
+one rubric version and one 40-minute re-score buys both.
 
 Deliberately deferred:
 - `src/match/embed.ts` — bge-small prefilter. At 5 jobs/day scoring everything is cheaper
