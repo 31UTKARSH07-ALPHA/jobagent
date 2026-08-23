@@ -159,9 +159,12 @@ consent screen did not take**. `gmail.readonly` is a *restricted* scope, so Goog
 be holding the app unverified. It matters more than it used to: alert email is **67 of 76
 postings**, against 9 from all 51 ATS boards combined.
 
-Fix now: `node src/gmail/auth.ts` (opens a browser, ~20 seconds). Fix properly: confirm the
-consent screen is really published, or move to a Workspace account on an own domain — already
-on the later-phases list for deliverability anyway.
+Fix now: `node src/gmail/auth.ts` (opens a browser, ~20 seconds; click through the
+"Google hasn't verified this app" screen via `Advanced`). Fix properly: set the OAuth consent
+screen's publishing status to **In production** — see 015a, which separates *publishing* (stops
+the 7-day expiry) from *verification* (only removes the warning screen, and is not worth
+pursuing for a one-user app). The real escape hatch remains a Workspace account on an own
+domain, already on the later-phases list for deliverability anyway.
 
 Worth building either way: nothing told anybody. A dead credential shows up as
 `source_failed: 1` in `runs.stats` and a log line, and the digest is silent by design (014).

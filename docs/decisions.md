@@ -345,6 +345,26 @@ Phase-3-and-later list) removes it.
 
 ---
 
+### 015a — "Published" and "verified" are different things, and only one matters here
+
+Observed 2026-08-23, while fixing the fourth `invalid_grant` in two weeks.
+
+- **Publishing status `Testing`** is what expires the refresh token after **7 days**. This is
+  the thing that has broken ingest repeatedly.
+- **Verification** is a separate Google review — homepage, privacy policy, demo video — and its
+  only effect is removing the "Google hasn't verified this app" warning screen.
+
+So the fix is to set publishing status to **In production** and *not* submit for verification.
+The scary screen stays; the weekly token death stops. An unverified production app with
+sensitive scopes is capped at 100 users, which is irrelevant for a tool with exactly one.
+
+Clicking `Advanced → Go to … (unsafe)` on that screen is the correct action for the owner of
+the app, and will remain necessary at every re-authorisation. That is cosmetic. A token that
+dies every 7 days in a pipeline designed to run unattended is not.
+
+The real escape hatch stays what `phases.md` already lists: a Google Workspace account on an
+own domain, where this app is *internal* and consents without any of this.
+
 ## 016 — Alert emails carry no job description, and that is accepted
 
 **Decision.** Postings from Gmail alerts are stored with `description = ''`. The posting page
