@@ -62,7 +62,11 @@ export const DAILY_STAGES = [
 export const STAGE_BUDGET_MS: Record<string, number> = {
   ingest: 12 * 60_000,
   score: 75 * 60_000,
-  digest: 5 * 60_000,
+  // Four send attempts × a 20s request timeout, plus the 2+8+32s backoff ladder, is ~122s
+  // per message part — and a ten-match digest is two or three parts. At 5 minutes the budget
+  // was killing its own retries: measured 08-21 to 08-23, three digests died mid-ladder with
+  // `send_retry: 2` (decision 025).
+  digest: 8 * 60_000,
 };
 
 export const DEFAULT_STAGE_BUDGET_MS = 10 * 60_000;

@@ -94,3 +94,26 @@ test('a long digest sends every part, retrying only the part that failed', async
     assert.equal(calls(), 3);
   });
 });
+
+test('an abandoned stage stops the retry ladder', async () => {
+  // Measured 2026-08-23: the digest stage was killed for overrunning its budget and two
+  // more attempts still landed in the log afterwards, against a stage nobody was waiting
+  // on (decision 025).
+  const controller = new AbortController();
+  const retries: string[] = [];
+
+  await withFetch([boom, boom, boom, boom], async (calls) => {
+    globalThis.fetch = async () => {
+      controller.abort(); // the stage runs out of budget during the first attempt
+      throw Object.assign(new TypeError('fetch failed'), {
+        cause: Object.assign(new Error('ENOTFOUND'), { code: 'ENOTFOUND' }),
+      });
+    };
+    await assert.rejects(() =>
+      sendMessage(CONFIG, 'hello', (m) => retries.push(m), controller.signal),
+    );
+    assert.equal(calls(), 0, 'the scripted responses are unused; the stub above replaced them');
+  });
+
+  assert.equal(retries.length, 1, 'one failure logged, then it stops rather than ladder on');
+});

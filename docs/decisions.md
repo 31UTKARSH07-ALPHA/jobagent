@@ -837,3 +837,58 @@ there is nothing between 70 and 76 — and moving it to 80 would drop the four p
 
 **Revisit when.** A company signal exists (3), which is a rubric change and therefore v5.
 Re-check the threshold against that distribution rather than assuming 70 carries over.
+
+---
+
+## 025 — The fixes in 019 and 022 each had a hole. Both were in the ordering
+
+**Decision.** Three changes, from three more silent mornings (08-21, 08-22, 08-23):
+
+1. **The network gate checks every host the run depends on**, not one:
+   `api.telegram.org`, `api.groq.com`, `oauth2.googleapis.com`.
+2. **Alert email is polled first**, and **each source gets its own 3-minute budget**
+   (`SOURCE_BUDGET_MS`) under the stage budget.
+3. **The digest budget is 8 minutes, not 5**, and the send stops retrying once its stage has
+   been abandoned.
+
+**Why the gate was not enough.** 019 waited for `oauth2.googleapis.com` and then trusted the
+network. Measured on 08-23: `network up after 10s`, and then
+
+```
+[ingest] warn: lever/anyscale: stage exceeded its 12 min budget
+[ingest] lever: 0 kept in 1048s
+```
+
+DNS came back **for some names and not others**. One host resolving proves nothing about the
+rest, and node's `AbortSignal.timeout` does not interrupt a stuck `getaddrinfo` — which is why
+a 15-second request timeout produced a 17-minute source. `curl --max-time` does cover the
+lookup, so the gate is the right place to test it, and it now tests everything that costs a
+whole stage. Board hosts are deliberately excluded: a dead ATS is normal and costs one source.
+
+**Why the stage budget was not enough.** 022's budget says *when* to stop, not *who got the
+time*. Lever spent the entire 12 minutes, so ingest never reached the two sources after it:
+
+```
+[ingest] out of time — skipped ashby and any source after it
+```
+
+Alert email was last in the list and supplies **67 of 76 postings** — the run was reliably
+starving its best source to feed five boards that were not answering. So sources are now
+ordered best-first, and no single source can spend more than three minutes of a
+twelve-minute stage. A healthy source finishes in under thirty seconds.
+
+**Why the digest budget was actively harmful at 5 minutes.** Four attempts × a 20s request
+timeout plus the 2+8+32s ladder is ~122s per message part, and a ten-match digest is two or
+three parts. The budget was killing the retries it was supposed to allow — three digests died
+mid-ladder with `send_retry: 2`. And because attempts kept running after the stage was
+abandoned, two of them logged *after* `[digest] failed`, against a stage nobody was waiting
+on. The send now takes the stage signal and stops.
+
+**The pattern worth naming.** Every fix in 019, 022 and 025 was correct and incomplete in the
+same way: it bounded the thing that had just failed, without asking what would then fail
+first. A budget without an ordering starves the tail; a gate on one host says nothing about
+the next. When adding a limit, check what it makes the *new* bottleneck.
+
+**Measured after.** A full `--dry-run` pipeline: **30 seconds**, with alert email attempted
+first, all four ATS adapters polled, and the digest rendered. Lever, Ashby and Workable still
+fail from this network at times, and now cost seconds rather than a morning.

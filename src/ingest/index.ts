@@ -30,13 +30,30 @@ export const STALE_AFTER_DAYS = 14;
 const BATCH_SIZE = 50;
 
 /**
- * Every source, in the order they are polled.
+ * How long any one source gets before the rest of the stage is protected from it.
+ *
+ * Measured 2026-08-23: `api.lever.co` hung for **1048 seconds** on five boards, ate the whole
+ * 12-minute stage budget, and ingest never reached the two sources after it — including alert
+ * email, which supplies 67 of 76 postings. A stage budget alone cannot prevent that; it only
+ * says when to stop, not who got the time (decision 025).
+ *
+ * Three minutes is generous: a healthy source finishes in under 30 seconds.
+ */
+export const SOURCE_BUDGET_MS = 3 * 60_000;
+
+/**
+ * Every source, **best first**.
+ *
+ * Alert email leads because it is the most valuable and the cheapest: 67 postings a run
+ * against 9 from all 51 ATS boards combined, in ~23 seconds, and it is the only source that
+ * reaches the Indian companies with no public ATS at all (decision 010). Being last is what
+ * got it starved three mornings running.
  *
  * The Gmail source takes the DB because it is the only adapter that receives a company *name*
  * rather than a board it already knows the owner of — see `AlertPosting` in `./types.ts`.
  */
 export function sources(db: Db): JobSource[] {
-  return [...atsSources(loadCompanies()), gmailAlertSource({ db })];
+  return [gmailAlertSource({ db }), ...atsSources(loadCompanies())];
 }
 
 export async function runIngest(ctx: StageContext): Promise<void> {
@@ -52,8 +69,8 @@ export async function runIngest(ctx: StageContext): Promise<void> {
     );
   }
 
-  const all = [...atsSources(companies), gmailAlertSource({ db: ctx.db })];
-  ctx.log(`${companies.length} companies across ${all.length - 1} boards, plus alert email`);
+  const all = [gmailAlertSource({ db: ctx.db }), ...atsSources(companies)];
+  ctx.log(`alert email first, then ${companies.length} companies across ${all.length - 1} boards`);
 
   const since = new Date(Date.now() - INGEST_WINDOW_DAYS * 86_400_000);
   const pending: { companyId: number; raw: Parameters<typeof upsertJob>[2] }[] = [];
@@ -81,11 +98,15 @@ export async function runIngest(ctx: StageContext): Promise<void> {
     const before = Date.now();
     let fromSource = 0;
 
+    // One source cannot spend the whole stage. `AbortSignal.any` keeps the stage deadline
+    // above it, so whichever expires first wins.
+    const perSource = AbortSignal.any([ctx.signal, AbortSignal.timeout(SOURCE_BUDGET_MS)]);
+
     try {
       for await (const raw of source.fetch(since, {
         onError: (message) => ctx.log(`warn: ${message}`),
         count: ctx.count,
-        signal: ctx.signal,
+        signal: perSource,
       })) {
         // Companies are upserted outside the batch: several jobs share one company and
         // we need its id before the job row can be written.

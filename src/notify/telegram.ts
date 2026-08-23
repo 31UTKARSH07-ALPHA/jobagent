@@ -111,12 +111,19 @@ async function sendPart(
   config: TelegramConfig,
   part: string,
   onRetry?: (message: string) => void,
+  signal?: AbortSignal,
 ): Promise<SendResult> {
   let last: unknown;
 
   for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
+    // The digest stage was abandoned for running over its budget (022). Attempts after that
+    // point are logged into a stage nobody is waiting on — measured on 2026-08-23, two of
+    // them landed in the log after `[digest] failed`.
+    if (signal?.aborted === true) break;
+
     if (attempt > 1) await sleep(backoffMs(attempt - 1));
 
+    const timeout = AbortSignal.timeout(20_000);
     try {
       const res = await fetch(`${API}/bot${config.token}/sendMessage`, {
         method: 'POST',
@@ -127,7 +134,7 @@ async function sendPart(
           parse_mode: 'HTML',
           disable_web_page_preview: true,
         }),
-        signal: AbortSignal.timeout(20_000),
+        signal: signal === undefined ? timeout : AbortSignal.any([timeout, signal]),
       });
 
       const payload = (await res.json()) as {
@@ -164,13 +171,14 @@ export async function sendMessage(
   config: TelegramConfig,
   text: string,
   onRetry?: (message: string) => void,
+  signal?: AbortSignal,
 ): Promise<SendResult[]> {
   const sent: SendResult[] = [];
 
   // Parts are sent in order and not retried as a group: a digest that got halfway is
   // reported as a failure, and `digested_at` stays NULL, so tomorrow resends the whole thing.
   for (const part of chunk(text)) {
-    sent.push(await sendPart(config, part, onRetry));
+    sent.push(await sendPart(config, part, onRetry, signal));
   }
 
   return sent;

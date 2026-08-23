@@ -47,13 +47,28 @@ stamp() { date "+%Y-%m-%dT%H:%M:%S%z"; }
 # Every stage needs the network, so there is nothing useful to do without it. Wait,
 # then run; or give up cleanly and let tomorrow retry rather than write a run of
 # failures into the DB.
-NET_HOST=${JOBAGENT_NET_CHECK:-https://oauth2.googleapis.com/}
+# The hosts without which this run has nothing to do. One is not enough: measured on
+# 2026-08-21 to 08-23, oauth2.googleapis.com resolved in 10 seconds while api.lever.co and
+# api.telegram.org were still hanging — DNS came back for some names and not others, so a
+# single-host check waved the run through into 17-minute lookups.
+#
+# Board hosts are deliberately NOT here. A dead ATS is normal and costs one source; these
+# three each cost a whole stage: Groq is scoring, Google is the alert email that carries most
+# of the postings, Telegram is the digest itself.
+NET_HOSTS=${JOBAGENT_NET_CHECK:-"https://api.telegram.org/ https://api.groq.com/ https://oauth2.googleapis.com/"}
 NET_WAIT_SECONDS=${JOBAGENT_NET_WAIT:-900} # 15 min
 NET_POLL_SECONDS=10
 
-# curl exits 0 when DNS, TCP and TLS all worked, whatever HTTP status comes back.
+# curl exits 0 when DNS, TCP and TLS all worked, whatever HTTP status comes back. Its own
+# --max-time covers the DNS lookup, which is exactly what node's AbortSignal does not.
 CURL=$(command -v curl || true)
-online() { "$CURL" -sS --max-time 5 --head "$NET_HOST" >/dev/null 2>&1; }
+
+unreachable() {
+  for host in $NET_HOSTS; do
+    "$CURL" -sS --max-time 5 --head "$host" >/dev/null 2>&1 || { echo "$host"; return 0; }
+  done
+  return 1
+}
 
 wait_for_network() {
   # Fail *open*. A missing curl must not turn into a run that is skipped every morning
@@ -64,18 +79,19 @@ wait_for_network() {
     return 0
   fi
 
-  online && return 0
+  blocked=$(unreachable) || return 0
 
-  echo "   waiting for the network, up to ${NET_WAIT_SECONDS}s — $NET_HOST"
+  echo "   waiting for the network, up to ${NET_WAIT_SECONDS}s — $blocked not reachable yet"
   waited=0
   while [ "$waited" -lt "$NET_WAIT_SECONDS" ]; do
     sleep "$NET_POLL_SECONDS"
     waited=$((waited + NET_POLL_SECONDS))
-    if online; then
-      echo "   network up after ${waited}s"
+    blocked=$(unreachable) || {
+      echo "   all of $NET_HOSTS reachable after ${waited}s"
       return 0
-    fi
+    }
   done
+  echo "   still cannot reach $blocked"
   return 1
 }
 
