@@ -139,7 +139,15 @@ const BLOCKED_CEILING = 30;
  * The two gates are the "hard rules" that used to be prose in the prompt. Prose the model
  * agreed with and then ignored; code cannot ignore it.
  */
-export function fitScore(r: ScoreResult, titleOnly = false): number {
+/**
+ * `titleOnly` is deliberately **required**, not defaulted.
+ *
+ * It had a default when v4 landed, and the `--job` inspection path quietly omitted it —
+ * printing 100 for a description-free posting whose real score is 84, on the one screen whose
+ * whole purpose is letting a human check the scorer before trusting it. A default turns a
+ * missed call site into a wrong number; a required parameter turns it into a compile error.
+ */
+export function fitScore(r: ScoreResult, titleOnly: boolean): number {
   const weighted =
     r.level_fit * WEIGHTS.level_fit +
     r.location_fit * WEIGHTS.location_fit +
@@ -499,9 +507,13 @@ async function scoreOne(dbPath: string, jobId: number): Promise<number> {
   db.close();
 
   const result = await groqScorer.score(job, row?.name ?? '(unknown)', loadProfile());
-  const fit = fitScore(result);
+  // The evidence discount has to be applied here too. It was missed when v4 landed, and this
+  // path printed 100 for a description-free LinkedIn posting whose real score is 84 — on the
+  // one screen whose entire job is letting a human check the scorer before trusting it.
+  const titleOnly = isTitleOnly(job);
+  const fit = fitScore(result, titleOnly);
   console.log(`${row?.name} — ${job.title}  [${job.location}]`);
-  console.log(`\nfactors    ${factorLine(result)}`);
+  console.log(`\nfactors    ${factorLine(result)}${titleOnly ? '   (no description: total discounted)' : ''}`);
   console.log(`fit_score  ${fit}  → ${stateForScore(fit)}`);
   console.log(`reasoning  ${result.reasoning}`);
   console.log(`hook       ${result.hook}`);

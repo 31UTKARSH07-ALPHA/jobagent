@@ -5,6 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { openDb, type Db } from '../store/db.ts';
 import { upsertCompany } from '../store/companies.ts';
 import { upsertJob } from '../store/jobs.ts';
@@ -133,31 +134,31 @@ function seed(db: Db, titles: string[], description = REAL_JD): number[] {
 // ─────────────────────────────────────────────────────────────────────────────
 
 test('the score is a pure function of the factors, and spans the full range', () => {
-  assert.equal(fitScore(judgement()), 100);
+  assert.equal(fitScore(judgement(), false), 100);
   assert.equal(
-    fitScore(judgement({ level_fit: 0, location_fit: 0, stack_fit: 0, domain_fit: 0 })),
+    fitScore(judgement({ level_fit: 0, location_fit: 0, stack_fit: 0, domain_fit: 0 }), false),
     0,
   );
   // 10·.3 + 10·.25 + 5·.25 + 5·.2 = 7.75 → 78
-  assert.equal(fitScore(judgement({ stack_fit: 5, domain_fit: 5 })), 78);
+  assert.equal(fitScore(judgement({ stack_fit: 5, domain_fit: 5 }), false), 78);
   // Same ratings twice must give the same number — that is the whole point of moving it
   // out of the model.
   const twice = judgement({ stack_fit: 3, domain_fit: 7 });
-  assert.equal(fitScore(twice), fitScore(twice));
+  assert.equal(fitScore(twice, false), fitScore(twice, false));
 });
 
 test('an impossible job cannot be rescued by a perfect stack match', () => {
   // "3+ years" with everything else ideal. Weighted this would be 73 — a MATCH.
   const experienceBar = judgement({ level_fit: 1 });
-  assert.ok(fitScore(experienceBar) < MATCH_THRESHOLD, `got ${fitScore(experienceBar)}`);
-  assert.equal(stateForScore(fitScore(experienceBar)), 'REJECTED');
+  assert.ok(fitScore(experienceBar, false) < MATCH_THRESHOLD, `got ${fitScore(experienceBar, false)}`);
+  assert.equal(stateForScore(fitScore(experienceBar, false)), 'REJECTED');
 
   // Onsite in another country, no remote offered.
   const onsiteAbroad = judgement({ location_fit: 0 });
-  assert.ok(fitScore(onsiteAbroad) < MATCH_THRESHOLD, `got ${fitScore(onsiteAbroad)}`);
+  assert.ok(fitScore(onsiteAbroad, false) < MATCH_THRESHOLD, `got ${fitScore(onsiteAbroad, false)}`);
 
   // A merely weak rating is not a blocker — it just costs its weight.
-  assert.ok(fitScore(judgement({ level_fit: 4 })) > MATCH_THRESHOLD);
+  assert.ok(fitScore(judgement({ level_fit: 4 }), false) > MATCH_THRESHOLD);
 });
 
 test('the threshold is applied in exactly one place, and the boundary is inclusive', () => {
@@ -381,3 +382,4 @@ test('the stage stores what the model actually said, not a flattened copy', asyn
   assert.equal(ctx.counts['title_only'], 1);
   db.close();
 });
+
