@@ -141,6 +141,14 @@ export type SearchOptions = {
   /** Stop after this many messages. Alert mail is small but there is no reason to fetch 500. */
   limit?: number;
   onError?: (message: string) => void;
+  /**
+   * The caller's deadline, passed to every Google request and checked between them.
+   *
+   * Without it a hung Gmail call has nothing to stop it. On 2026-08-24 that took the whole
+   * 12-minute ingest budget and, because alert email is polled first (025), every source
+   * behind it as well — ingest logged not one line (decision 028).
+   */
+  signal?: AbortSignal;
 };
 
 /**
@@ -161,12 +169,17 @@ export async function* searchIds(
   let yielded = 0;
 
   do {
-    const res = await gmail.users.messages.list({
-      userId: 'me',
-      q,
-      maxResults: Math.min(limit - yielded, 100),
-      ...(pageToken === undefined ? {} : { pageToken }),
-    });
+    if (opts.signal?.aborted === true) return;
+
+    const res = await gmail.users.messages.list(
+      {
+        userId: 'me',
+        q,
+        maxResults: Math.min(limit - yielded, 100),
+        ...(pageToken === undefined ? {} : { pageToken }),
+      },
+      { signal: opts.signal },
+    );
 
     for (const message of res.data.messages ?? []) {
       if (message.id) {
@@ -179,8 +192,12 @@ export async function* searchIds(
   } while (pageToken !== undefined);
 }
 
-export async function getEmail(gmail: gmail_v1.Gmail, id: string): Promise<Email> {
-  const res = await gmail.users.messages.get({ userId: 'me', id, format: 'full' });
+export async function getEmail(
+  gmail: gmail_v1.Gmail,
+  id: string,
+  signal?: AbortSignal,
+): Promise<Email> {
+  const res = await gmail.users.messages.get({ userId: 'me', id, format: 'full' }, { signal });
   return toEmail(res.data);
 }
 
@@ -195,8 +212,9 @@ export async function* searchEmails(
   opts: SearchOptions,
 ): AsyncGenerator<Email> {
   for await (const id of searchIds(gmail, opts)) {
+    if (opts.signal?.aborted === true) return;
     try {
-      yield await getEmail(gmail, id);
+      yield await getEmail(gmail, id, opts.signal);
     } catch (err) {
       opts.onError?.(`message ${id} unreadable: ${err instanceof Error ? err.message : String(err)}`);
     }

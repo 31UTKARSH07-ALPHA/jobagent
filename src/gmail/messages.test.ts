@@ -15,6 +15,7 @@ import {
   headerValue,
   toEmail,
   walkParts,
+  searchEmails,
 } from './messages.ts';
 
 const b64 = (s: string): string => Buffer.from(s, 'utf8').toString('base64url');
@@ -221,4 +222,36 @@ test('the search window is expressed in whole seconds, as Gmail requires', () =>
   assert.equal(afterClause(new Date('2026-08-01T00:00:00.000Z')), 'after:1785542400');
   // Gmail rejects a fractional timestamp outright.
   assert.equal(/\./.test(afterClause(new Date(1785542400123))), false);
+});
+
+test('a deadline stops the search rather than being ignored', async () => {
+  // 2026-08-24: a hung Gmail call had nothing to stop it, took the whole 12-minute ingest
+  // budget, and because alert email is polled first (025) took every source behind it too.
+  // Ingest logged not one line that morning (decision 028).
+  const controller = new AbortController();
+  const seen: unknown[] = [];
+
+  const gmail = {
+    users: {
+      messages: {
+        list: async (_p: unknown, o: { signal?: AbortSignal }) => {
+          seen.push(o?.signal);
+          return { data: { messages: [{ id: 'a' }, { id: 'b' }], nextPageToken: undefined } };
+        },
+        get: async (_p: unknown, o: { signal?: AbortSignal }) => {
+          seen.push(o?.signal);
+          controller.abort(); // the source runs out of budget on the first message
+          return { data: { id: 'a', internalDate: '0', payload: { headers: [] } } };
+        },
+      },
+    },
+  } as unknown as Parameters<typeof searchEmails>[0];
+
+  const out = [];
+  for await (const email of searchEmails(gmail, { query: 'x', signal: controller.signal })) {
+    out.push(email);
+  }
+
+  assert.equal(out.length, 1, 'it stops after the abort instead of fetching the rest');
+  assert.ok(seen.every((s) => s === controller.signal), 'every Google call carries the deadline');
 });

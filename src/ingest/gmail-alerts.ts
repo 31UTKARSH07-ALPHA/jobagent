@@ -80,6 +80,9 @@ export function gmailAlertSource(opts: GmailAlertOptions): JobSource {
         since,
         limit: opts.limit ?? DEFAULT_LIMIT,
         onError: (m) => ctx.onError?.(m),
+        // Without this a hung Gmail call is unbounded, and this source is polled first, so
+        // it takes every source behind it down with it (decision 028).
+        signal: ctx.signal,
       })) {
         const parser = PARSERS.find((p) => p.senders.test(email.fromAddress));
         if (parser === undefined) {

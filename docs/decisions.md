@@ -1008,3 +1008,38 @@ starved end is the end most likely to be closed anyway. But it is a real cost, a
 fix is not a third ordering: it is either a bigger digest, or a queue that **expires** unsent
 matches after about a week instead of pretending they will get their turn. **Not settled — see
 `agenthandoff.md`.**
+
+---
+
+## 028 — A deadline only works where it is actually plumbed
+
+**Decision.** `searchEmails` takes the caller's `AbortSignal`, passes it to every Google
+request, and checks it between messages. `gmailAlertSource` hands it `ctx.signal`.
+
+**Why.** 2026-08-24, the morning after 025 supposedly fixed exactly this:
+
+```
+[ingest] alert email first, then 51 companies across 4 boards
+[ingest] failed: stage exceeded its 12 min budget
+[ingest] done in 1014884ms
+```
+
+Not one source line. Ingest hung inside the *first* source and never came out. 025 gave every
+source a 3-minute budget — but a budget is an `AbortSignal`, and `src/ingest/gmail-alerts.ts`
+never looked at one. The signal was plumbed into `getJson`, which the ATS pollers use, and not
+into the Gmail path, which goes through `@googleapis/gmail`.
+
+**The part worth remembering.** 025 also moved alert email to the *front* of the queue, because
+it is the most valuable source. That was right, and it made this worse: the one source with no
+deadline became the one everything else waits behind. A correct change and an unnoticed gap
+combined into a run that did nothing at all.
+
+Same shape as 025's own lesson, one level down: bounding a thing only bounds the paths you
+actually bounded. **When adding a deadline, check every I/O path underneath it, not just the
+one that failed.** `src/llm/groq.ts` has its own `fetch` and is the remaining unplumbed path —
+scoring's 75-minute budget cannot stop a hung Groq call today. Written down rather than left
+to be rediscovered.
+
+**What did work that morning**, recorded because it is the first time: `[health] reported 2 new
+problem(s)`. The pipeline told Utkarsh it was broken on the morning it broke, without anyone
+reading a log (026). Every previous failure took two to fourteen days to find.
