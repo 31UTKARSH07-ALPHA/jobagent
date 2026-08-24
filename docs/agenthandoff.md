@@ -13,76 +13,49 @@ Do not restate architecture here. Point at `docs/architecture.md`.
 
 ## Now
 
-**Phase 1 is closed** (2026-08-14 06:11: scheduled, unattended, 3 matches to Telegram).
-171 tests green, `tsc --noEmit` clean. The repo lives at **`~/jobagent`** and must never move
-back under Desktop, Documents or Downloads (018a).
+**Phase 1 works and is scheduled.** 90 jobs scored under rubric v4, 74 matched, 16 rejected,
+78 companies. 186 tests green, `tsc --noEmit` clean, tree clean, all pushed. Repo lives at
+`~/jobagent` and must never move under Desktop/Documents/Downloads (018a).
 
-**Read this before trusting a green run.** Every failure since Phase 1 closed has been silent
-— exit 0, nothing delivered — and each fix exposed the next one:
+**Read `SUMMARY.md` if you want the project in plain language.** It is written for Utkarsh, not
+for you, and it is the fastest way to get oriented.
 
-| When | Looked like | Actually was |
+### The thing to understand before changing anything
+
+Every failure in this project's first three weeks was **silent** — a green exit code, an empty
+digest, and the cause sitting in `runs.errors` where nobody looked:
+
+| Broke | Noticed | Fixed by |
 |---|---|---|
-| 08-14, 08-15 | exit 0, no jobs | no network at 06:00; 55 min of DNS timeouts (019) |
-| 08-16 | digest at 13:24 | no stage deadline; 7-hour run (022) |
-| 08-17 → 08-20 | exit 0, no digest | one `fetch failed`, no retry (022) |
-| 08-19 → **now** | `source_failed: 1` | **Gmail token expired — still unfixed, needs Utkarsh** |
-| all of them | 27 of 29 "matched" | the score was the constant 82 (023) |
-| 08-21 → 08-23 | exit 0, no digest | the gate trusted one host; the budget starved the best source (025) |
+| no network at 06:00 | 2 days | 019 network gate |
+| a stage with no deadline (7-hour run) | 4 days | 022 stage budgets |
+| digest could not send | 4 days | 022 send retries |
+| Gmail token expired | 4 days | re-auth; 026 now alerts |
+| score was secretly the constant 82 | 2 weeks | 023 rubric v4 |
+| gate trusted one host; budget starved the best source | 3 days | 025 |
+| the Gmail path never received the deadline | 1 day | 028 |
 
-**The lesson that keeps repeating** (025): each fix bounded whatever had just failed without
-asking what would fail *first* once it was bounded. A budget without an ordering starves the
-tail. A gate on one host says nothing about the next. When adding a limit, work out what it
-makes the new bottleneck.
+**Three of those were caused by the fix before them.** 025 and 028 both record the same lesson
+at different levels: bounding a thing only bounds the paths you actually bounded, and a limit
+without an ordering just moves the bottleneck. Before adding a limit, work out what it makes
+the *new* first thing to fail.
 
-**And the reason none of it was noticed for a week:** the digest is silent when nothing
-matched (014), so a dead morning and a quiet one look identical from the phone. That default
-is still right, but it means **the logs are the only place a failure shows up** — `--status`
-and `logs/daily.log`. Making a broken *credential* shout is the top item under *Next action*.
+**As of 2026-08-24 that loop is finally closed** — `[health] reported 2 new problem(s)` in that
+morning's log is the first time the pipeline announced its own breakage on the day it happened
+(026). Trust the alert, not the exit code.
 
-| Works today | Command |
-|---|---|
-| ATS ingest across 51 verified boards | `node src/main.ts --stage=ingest` |
-| Re-verify / extend the board list | `node src/ingest/refresh-companies.ts` |
-| Resume → `data/profile.json` | `node src/match/profile.ts --resume=<pdf>` |
-| **Scoring → MATCHED / REJECTED** | `node src/main.ts --stage=score` |
-| **One job, printed, nothing written** | `node src/match/score.ts --job=<id>` |
-| **The calibration histogram** | `node src/match/score.ts --distribution` |
-| **Send the morning digest** | `node src/main.ts --stage=digest` |
-| **Preview it without sending** | `node src/main.ts --stage=digest --dry-run` |
-| **Prove the bot works** | `node src/notify/telegram.ts --test` |
-| **Gmail status** | `node src/gmail/auth.ts --status` |
-| **Inspect real alert mail** | `node src/gmail/messages.ts --query="from:naukri.com" --links --full` |
-| **Re-score after a rubric bump** | `node src/match/score.ts --rescore` |
-| **What launchd runs, run by hand** | `./scripts/run-daily.sh [--dry-run]` |
-| **Is the schedule alive?** | `node src/schedule/launchd.ts --status` |
-| **Reload it after an edit / remove it** | `node src/schedule/launchd.ts --install` / `--uninstall` |
-| Any model call | `complete()` / `chat()` in `src/llm/groq.ts` |
+### The state of the last run
 
-**Gmail is live.** Authorised as `3107utkarshpathak@gmail.com` (`token.json`, mode 600),
-scopes readonly + compose + send. Telegram bot `@utkarsh_jobagent_bot`, token and chat id in
-`.env`. Utkarsh forwards LinkedIn and Naukri mail into that mailbox with Gmail *filters* —
-note that Gmail's "Disable forwarding" radio only governs blanket forwarding, so a filter
-forwards regardless of what that radio says.
-
-**39 jobs in the DB across 33 companies**, all scored. Rubric **v4** as of 2026-08-20 — ignore
-v1, v2 and v3 rows for calibration (v1 ran at temperature 1.0, v2 predates the title-only
-handling, v3 *is* the flat-82 bug that 023 fixes).
-
-**Throughput is the constraint:** ~67s per scored job, since the pacer waits for token headroom
-instead of being refused (017). The digest arrives when scoring finishes, not at a fixed 06:05.
-
-**Both alert parsers are live and were written against real mail** — Naukri 2026-08-11,
-LinkedIn 2026-08-16 (016, 020). Between them they are now the main source of jobs: 67 alert
-postings per run against 9 from all 51 ATS boards combined, which is decision 010's coverage
-argument showing up in the numbers.
-
-Not built yet: contacts, drafting, sending. `src/main.ts` still logs those stages as no-ops.
+The 08-24 06:13 run **failed**, and its cause is fixed but unverified: ingest hung in the Gmail
+source because that path never got the abort signal (028). The fix is committed; **the 08-25
+06:00 run is the first test of it.** Check that ingest logs a `gmail-alert: N kept` line at
+all — that line missing entirely is the signature of this bug.
 
 ## In flight
 
 Nothing. Clean tree, no partial work.
 
-## Read decisions 012–025 before touching the scorer, the digest, the parsers or the schedule
+## Read decisions 012–028 before touching the scorer, the digest, the parsers or the schedule
 
 Things a fresh session would otherwise undo, all measured rather than assumed:
 
@@ -174,37 +147,51 @@ That is the recurring shape of every failure in the table above.
 
 ## Next action
 
-**1. Re-authorise Gmail — still not done, and it is now the only thing stopping new jobs.**
+**1. Check the 08-25 06:00 run.** First test of 028.
 
 ```
-node src/gmail/auth.ts      # opens a browser, ~20 seconds
+node src/schedule/launchd.ts --status     # 0 ran · 75 skipped, no network · anything else, read on
+tail -60 logs/daily.log
 ```
 
-Failing since ~08-19 with `invalid_grant`, so **no new postings have entered the DB in four
-days**. Alert email is 67 of 76 postings. Also confirm the consent screen is genuinely
-published in Google Cloud Console: the 7-day Testing expiry firing at all says it is not, and
-`gmail.readonly` being a restricted scope means Google may be holding the app unverified.
+Ingest must log a line per source. `gmail-alert: N kept` missing entirely means 028 did not
+take. A Telegram message about failures means 026 is working — that is the system behaving,
+not a new problem.
 
-**2. Make a broken credential shout.** This is the same failure five times over: the tool
-breaks, `runs.errors` and `runs.stats.*_failed` record it perfectly, and nobody looks. 014
-forbids a *heartbeat* — a usually-empty daily message you stop reading — and that still holds.
-This is the opposite: a message sent **only** when a stage or source fails, and only when the
-previous run did not already report the same fault, so a persistent problem costs one message
-rather than one a day. Everything needed is already in `runs`.
+**2. Two open questions that need Utkarsh, not code.** Both are recorded in full in 027 and
+024; neither should be guessed at:
 
-**3. Phase 2 — contacts and drafts.** Unblocked, unstarted, and the largest remaining piece.
-Its first problem is already known: `resolveCompany` returns `.unknown.invalid` for nearly
-every alert-sourced company, because they are small firms absent from `candidates.ts`. With 33
-companies now, most from email, the cascade has to *find* a domain from a name rather than
-assume one exists.
+- **The digest backlog.** 46 matches are queued against `MAX_ITEMS_PER_DIGEST = 10`, so about
+  five days of it, and 57 of 90 scores tie at exactly 84 — the tiebreak decides what he
+  actually reads. It is newest-first now (027), which is the right direction for postings that
+  expire, but it starves the tail: Sony Research India's AI Research Intern may never be sent.
+  The honest fix is a **bigger digest** or a queue that **expires** unsent matches after about
+  a week. Not a third ordering. Ask him which.
+- **The Gmail consent screen is still in Testing**, so the token expires every 7 days and takes
+  the main job source with it. Last re-authorised 2026-08-23, so **expect it to die around
+  08-30**. 015a explains why *publishing* fixes this and *verification* is not worth pursuing.
 
-**4. The company signal in the rubric** (024's conclusion). A bare "Intern - Engineering" at
-CoinDCX is worth more than a bare "Intern" at a brewery, and `data/companies.json` already
-knows the difference. It is the one change that would fix both remaining scoring weaknesses —
-the 22-way tie at 84 and the false negatives on bare-but-real titles — because it adds
-information rather than re-weighting what is already there. Fold in the returnship fix
-(`level_fit` rated a "ReStart Consultant" career-break programme as a student internship) so
-one rubric version and one 40-minute re-score buys both.
+**3. Then the real work, and it is a genuine fork.**
+
+- **The company signal in the rubric (v5).** 57 of 90 jobs score exactly 84 because a title
+  like "Software Engineering Intern" tells the model everything and nothing. The employer is
+  the evidence being thrown away — a bare "Intern - Engineering" at CoinDCX is worth more than
+  a bare "Intern" at a brewery, and `data/companies.json` already knows which is which. This is
+  the only change that fixes both the tie *and* the false negatives (024), because it adds
+  information rather than re-weighting what is there. Fold in the returnship fix at the same
+  time: `level_fit` currently rates a "ReStart Consultant" career-break programme as a student
+  internship. One rubric version, one ~100-minute re-score, buys both.
+- **Phase 2 — contacts and drafts.** The larger piece and the actual product. Its first problem
+  is already known: `resolveCompany` returns `.unknown.invalid` for most alert-sourced
+  companies, because they are small firms absent from `candidates.ts`. With 78 companies, most
+  from email, the cascade has to *find* a domain from a name rather than assume one exists.
+
+Sharpening the rubric makes what exists better; Phase 2 adds what the project is actually for.
+**Utkarsh has not chosen between them** — the last session offered both and he did not answer.
+
+**4. Known and deliberately unfixed.** `src/llm/groq.ts` has its own `fetch` and never receives
+`ctx.signal`, so the score stage's 75-minute budget cannot stop a hung Groq call (028). It has
+not bitten yet because the network gate now checks `api.groq.com` before the run starts.
 
 Deliberately deferred:
 - `src/match/embed.ts` — bge-small prefilter. At 5 jobs/day scoring everything is cheaper

@@ -1,15 +1,12 @@
 # Phases
 
-> **Status: Phase 1 complete, and the calibration gate with it.** The 2026-08-14 06:11 run was
-> scheduled, unattended, and put 3 matches on Utkarsh's phone. Everything since has been making
-> that trustworthy: the 06:00 network gate (019), per-stage deadlines and a retrying send (022),
-> the LinkedIn parser (020), source-id dedup (021), and rubric v4 (023) — which turned a score
-> that was the constant 82 into one that rejects a brewery internship and keeps Sony Research.
-> Threshold measured and kept at 70 (024), and 025 closed the holes those earlier fixes left —
-> a gate that trusted one host, and a budget that starved the best source. **Next: Phase 2 —
-> contacts and drafts.** Two things first, both in `agenthandoff.md`: the Gmail token needs
-> re-authorising (no new jobs since 08-19), and a broken credential needs to be able to shout,
-> because five separate failures have now gone unnoticed for days at a time.
+> **Status: Phase 1 works and is scheduled; Phase 2 not started.** 90 jobs scored under rubric
+> v4, 74 matched, 78 companies, 186 tests. The three weeks since Phase 1's code was "done" went
+> almost entirely on making failures *visible* rather than silent — decisions 019 and 022–028,
+> of which three fixed problems caused by the fix before them. As of 2026-08-24 the pipeline
+> reports its own breakage the same morning (026), which is what makes the rest trustworthy.
+> **Next is a genuine fork, and Utkarsh has not chosen:** sharpen the rubric with a company
+> signal (024, fixes the 57-way tie at 84), or start Phase 2. See `agenthandoff.md`.
 > Update this header every time a phase completes. It is the first thing read each session.
 
 Ship each phase end-to-end before starting the next. A working Phase 1 already removes
