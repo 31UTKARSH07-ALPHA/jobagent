@@ -52,7 +52,7 @@ yet. This alone replaces the manual searching.
       give a display name
 - [x] `src/match/profile.ts` — resume PDF → typed profile (`unpdf` + Groq)
 - [ ] `src/match/embed.ts` — bge-small + cosine prefilter
-- [x] `src/llm/` — Groq client + one interface per job (decision 011)
+- [x] `src/llm/` — Groq client + one interface per job (decision 011) 
 - [x] `src/match/score.ts` — four factor ratings from the model, score computed in code
       (decision 012). `--distribution` prints the histogram the calibration gate needs.
 - [x] `src/notify/telegram.ts` — send-only Telegram client (`--chat-id`, `--test`)
@@ -61,7 +61,7 @@ yet. This alone replaces the manual searching.
 - [x] `src/main.ts` — stage runner + `--stage` / `--dry-run` flags *(done in Phase 0;
       stages just need real implementations plugged into `STAGES`)*
 - [x] `scripts/run-daily.sh` + `src/schedule/launchd.ts` — the 06:00 schedule. The plist is
-      generated from the running process, never committed (decision 018)
+      generated from the running process, never committed (decision 018) 
 
 **Done when:** a real Telegram digest arrives from a real cron run. ✅ **2026-08-14 06:11** —
 scheduled, unattended, exit 0, 3 matches reported.

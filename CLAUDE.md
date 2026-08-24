@@ -88,6 +88,7 @@ node src/schedule/launchd.ts --install # (re)write and load the agent; --uninsta
 | `docs/phases.md` | Deciding what to build next; check status header first |
 | `docs/agenthandoff.md` | **Start of every session** — in-flight work and blockers |
 | `docs/decisions.md` | About to change a design choice; check it wasn't already settled |
+| `SUMMARY.md` | Utkarsh asks what something is or does. Written for him, not for you — plain language, no jargon. Update it when the shape of the project changes, not for every commit |
 
 ## House style
 
