@@ -271,14 +271,20 @@ export function jobForPrompt(job: Job, companyName: string): string {
  */
 export type Scorer = {
   model: string;
-  score: (job: Job, companyName: string, profile: Profile) => Promise<ScoreResult>;
+  score: (
+    job: Job,
+    companyName: string,
+    profile: Profile,
+    signal?: AbortSignal,
+  ) => Promise<ScoreResult>;
 };
 
 export const groqScorer: Scorer = {
   model: modelFor('score').id,
-  score: (job, companyName, profile) =>
+  score: (job, companyName, profile, signal) =>
     complete(ScoreResult, 'job_score', {
       job: 'score',
+      signal,
       system: SYSTEM,
       messages: [
         { role: 'user', content: `${profileForPrompt(profile)}\n\n---\n\nPosting:\n\n${jobForPrompt(job, companyName)}` },
@@ -355,7 +361,7 @@ export async function runScore(ctx: StageContext, deps: ScoreDeps = {}): Promise
       const titleOnly = isTitleOnly(job);
       const result = existing
         ? factorsOf(existing)
-        : await scorer.score(job, job.company_name, profile);
+        : await scorer.score(job, job.company_name, profile, ctx.signal);
 
       if (existing) ctx.count('reused_score');
       if (titleOnly && !existing) ctx.count('title_only');

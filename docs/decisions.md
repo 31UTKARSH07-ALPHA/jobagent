@@ -1043,3 +1043,41 @@ to be rediscovered.
 **What did work that morning**, recorded because it is the first time: `[health] reported 2 new
 problem(s)`. The pipeline told Utkarsh it was broken on the morning it broke, without anyone
 reading a log (026). Every previous failure took two to fourteen days to find.
+
+---
+
+## 029 — The last unplumbed path. Closes the loop 022 opened
+
+**Decision.** `ChatOptions` takes an `AbortSignal`; `chat` checks it before each attempt,
+**inside the rate-limiter's wait**, and on the request itself; `complete` checks it around its
+schema retries; `Scorer.score` takes it and `runScore` passes `ctx.signal`.
+
+**Why.** 028 named `src/llm/groq.ts` as the remaining path with no deadline and said it had not
+bitten yet. It bit the next morning:
+
+```
+[score] scoring 3 of 3 waiting
+[score] job 96 failed: fetch failed
+[score] failed: stage exceeded its 75 min budget
+[score] done in 10300306ms          ← 2.9 hours, three jobs
+```
+
+Every network call in this project now flows through something that honours a deadline —
+`getJson` for boards (022), `searchEmails` for Gmail (028), `sendMessage` for Telegram (025),
+and this. That closes the class of bug 022 opened and 025 and 028 each partly fixed.
+
+**The rate-limiter wait is the important one.** A scoring run legitimately spends most of its
+time asleep, waiting for token headroom at two calls a minute (017) — so that sleep is exactly
+where a stage will be sitting when it runs out of time. A guard only before the request would
+have left the common case unbounded.
+
+**`stop()` is a function, not an inline check.** TypeScript narrows a repeated
+`opts.signal?.aborted === true` to `false` after the first one, having no idea the value flips
+while the loop sleeps. The compiler was right that the code as written was unreachable, and
+wrong about why.
+
+**The pattern, now four entries long** (022 → 025 → 028 → 029): a limit bounds only the paths
+you actually plumbed, and each fix moved the bottleneck to the next unplumbed one. The general
+lesson is cheap to state and was expensive to learn: **when adding a deadline, enumerate every
+I/O call underneath it, then check them off.** There is no fifth path today — but the next new
+network call is one, and it will not announce itself.

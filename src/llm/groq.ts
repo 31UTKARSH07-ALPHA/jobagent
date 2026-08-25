@@ -136,6 +136,15 @@ export type ChatOptions = {
   responseSchema?: { name: string; schema: Record<string, unknown> };
   timeoutMs?: number;
   retries?: number;
+  /**
+   * The caller's deadline. Combined with `timeoutMs`, and checked before each attempt and
+   * inside the pacer's wait.
+   *
+   * Without it the score stage's 75-minute budget cannot stop anything: on 2026-08-25 three
+   * jobs took **2.9 hours** while that budget sat there unable to fire, because every network
+   * call here goes through this file's own `fetch` (decision 029).
+   */
+  signal?: AbortSignal;
 };
 
 type GroqResponse = {
@@ -179,12 +188,26 @@ export async function chat(opts: ChatOptions): Promise<string> {
     estimateTokens(messages.map((m) => m.content).join('\n')) + Number(body['max_tokens']);
   const budget = windowFor(model.id, model.tpm);
 
+  // A function, not an inline check: `aborted` flips while this loop is sleeping, and
+  // TypeScript would narrow a repeated inline test to `false` after the first one.
+  const stop = (): void => {
+    if (opts.signal?.aborted === true) throw opts.signal.reason ?? new Error('aborted');
+  };
+
   for (let attempt = 0; attempt <= retries; attempt++) {
+    // Out of budget: stop before spending another minute on a stage nobody is waiting on.
+    stop();
+
     if (attempt > 0) await sleep(backoffMs || 1000 * 2 ** (attempt - 1));
 
     // Wait for room in the trailing minute rather than submitting and being refused. Loops
     // because one expiring entry may not free enough on its own.
+    //
+    // Checked inside the loop as well as outside it: this is where a run legitimately spends
+    // most of its time — ~67s per job at two calls a minute — so it is exactly where a stage
+    // that has run out of time will be sitting when it does.
     for (let waitMs = budget.waitMsFor(cost, Date.now()); waitMs > 0; waitMs = budget.waitMsFor(cost, Date.now())) {
+      stop();
       await sleep(waitMs);
     }
 
@@ -205,7 +228,10 @@ export async function chat(opts: ChatOptions): Promise<string> {
           'content-type': 'application/json',
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(timeoutMs),
+        signal:
+          opts.signal === undefined
+            ? AbortSignal.timeout(timeoutMs)
+            : AbortSignal.any([AbortSignal.timeout(timeoutMs), opts.signal]),
       });
 
       const payload = (await res.json()) as GroqResponse;
@@ -277,6 +303,10 @@ export async function complete<T>(
   let lastIssue = '';
 
   for (let attempt = 0; attempt <= SCHEMA_RETRIES; attempt++) {
+    // The outer of the two retry layers needs the same guard — three schema attempts, each
+    // of which is itself a retrying `chat`, is a long time to spend past a deadline.
+    if (opts.signal?.aborted === true) throw opts.signal.reason ?? new Error('aborted');
+
     const raw = await chat({ ...opts, responseSchema: { name, schema: jsonSchema } });
 
     let parsed: unknown;

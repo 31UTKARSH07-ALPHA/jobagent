@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { z } from 'zod';
-import { GroqError, isGenerationFailure, retryAfterMs, toStrictJsonSchema } from './groq.ts';
+import { GroqError, isGenerationFailure, retryAfterMs, toStrictJsonSchema, chat } from './groq.ts';
 import { MODELS, modelFor } from './models.ts';
 import { ScoreResult, Profile } from '../store/schema.ts';
 
@@ -128,5 +128,62 @@ test('an unset API key fails with instructions, not a stack trace', async () => 
     );
   } finally {
     if (saved !== undefined) process.env['GROQ_API_KEY'] = saved;
+  }
+});
+
+test('a deadline stops the call, the retries, and the pacer wait', async () => {
+  // 2026-08-25: three jobs took 2.9 hours while the score stage's 75-minute budget sat there
+  // unable to fire, because every call here goes through this file's own fetch and nothing
+  // passed it the stage signal (decision 029).
+  const controller = new AbortController();
+  const saved = process.env['GROQ_API_KEY'];
+  process.env['GROQ_API_KEY'] = 'test-key';
+  const original = globalThis.fetch;
+  let calls = 0;
+
+  globalThis.fetch = async () => {
+    calls++;
+    controller.abort(new Error('stage exceeded its 75 min budget'));
+    throw Object.assign(new TypeError('fetch failed'), {
+      cause: Object.assign(new Error('ETIMEDOUT'), { code: 'ETIMEDOUT' }),
+    });
+  };
+
+  try {
+    await assert.rejects(
+      () =>
+        chat({
+          job: 'score',
+          messages: [{ role: 'user', content: 'hi' }],
+          retries: 2,
+          signal: controller.signal,
+        }),
+      /75 min budget/,
+      'it surfaces the deadline, not the transport error',
+    );
+    // Without the guard this would burn all three attempts, each with its own backoff.
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = original;
+    if (saved === undefined) delete process.env['GROQ_API_KEY'];
+    else process.env['GROQ_API_KEY'] = saved;
+  }
+});
+
+test('an already-expired deadline is not even attempted', async () => {
+  const controller = new AbortController();
+  controller.abort(new Error('out of time'));
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new Error('must not be called');
+  };
+
+  try {
+    await assert.rejects(
+      () => chat({ job: 'score', messages: [{ role: 'user', content: 'hi' }], signal: controller.signal }),
+      /out of time/,
+    );
+  } finally {
+    globalThis.fetch = original;
   }
 });
