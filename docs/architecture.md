@@ -73,7 +73,7 @@ This section explains the *non-obvious* parts only.
 | `jobs` | One row per posting. Carries `state`. |
 | `job_scores` | PK `(job_id, prompt_version)`. Holds the four factor ratings *and* the score computed from them. |
 | `contacts` | Scoped to **company**, not job. `unique(email)`. |
-| `outreach` | `unique(job_id)`. Holds Gmail IDs + timestamps. |
+| `outreach` | `unique(job_id)`. Holds Gmail IDs + timestamps, and its **own** `digested_at` — a job is reported once as a match and again when its draft is ready (migration 005). |
 | `runs` | One row per pipeline execution: stats + errors. |
 
 ### Why `jobs.dedup_key`
@@ -114,8 +114,8 @@ on four identical prompts — and `REJECTED` is terminal. Decision 012 has the m
 | 1 | Ingest | source adapters, incl. Gmail alert mail | `jobs` (upsert), `companies` | daily |
 | 2 | Prefilter | `jobs` @ DISCOVERED | in-memory → top ~30 | daily |
 | 3 | Score | `jobs` @ DISCOVERED (prefilter is not built — see `phases.md`) | `job_scores`, state | daily |
-| 4 | Contacts | `jobs` @ MATCHED | `contacts`, state | daily |
-| 5 | Draft | job + score + contact | `outreach` @ DRAFTED | daily |
+| 4 | Contacts | `jobs` @ MATCHED, and NEEDS_CONTACT rows whose 3-day retry is due | `contacts`, **`companies.domain`**, state | daily |
+| 5 | Draft | job + score + contact | `outreach` @ DRAFTED, Gmail draft | daily |
 | 6 | Digest | `jobs` @ MATCHED with `digested_at IS NULL` | Telegram, `jobs.digested_at` | daily |
 | 7 | Gate + Send | `outreach` @ DRAFTED / approved | Gmail, state → SENT | daily + on-approval |
 | 8 | Track | `outreach` @ SENT | replies, bounces, follow-ups | **every 4h** |
@@ -138,6 +138,14 @@ owner is already known, so it is constructed with the DB and resolves the name t
 `src/ingest/resolve-company.ts` — an unresolvable name becomes an explicit
 `something.unknown.invalid` marker rather than a guess (decision 016). Its per-format parsers
 live in `src/ingest/*-alert.ts`; one entry in `PARSERS` adds a format.
+
+**Stage 4 writes `companies` as well as `contacts`, which the table above did not originally
+say.** Alert-sourced companies arrive with an `.unknown.invalid` marker instead of a domain
+(decision 016), and every rung of the cascade keys off a domain — so the stage's first act is
+to resolve and *prove* one, then adopt it. Adoption can **merge two company rows** when the
+proven domain already belongs to one (`adoptDomain` in `src/store/companies.ts`): the marker's
+jobs are re-pointed, their `dedup_key`s re-hashed against the new domain, and the marker row
+deleted. Decisions 030 and 031.
 
 Stage 8 runs on its **own schedule**, not as part of the daily pipeline. Replies and
 bounces arrive continuously; checking once a day wastes a day.
