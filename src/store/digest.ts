@@ -22,6 +22,13 @@ export type DigestItem = {
  * `digested_at IS NULL` is the whole idempotency story: a second run in the same morning
  * finds nothing, because the first run marked what it sent (invariant 4).
  *
+ * **State is filtered by what it is not.** This asked for `state = 'MATCHED'` until the
+ * contacts stage arrived and moved 67 jobs to `DRAFTED` and 10 to `NEEDS_CONTACT` — at which
+ * point 52 undigested matches would have vanished from the next morning's digest with no
+ * error anywhere, which is this project's signature failure. Excluding the states that mean
+ * "no longer a live match" fails in the safe direction: a state added to the machine later
+ * shows up in the digest rather than silently disappearing from it.
+ *
  * **Each job's highest `prompt_version`, not a pinned one.** Pinning the current version looked
  * tidier and quietly broke on the first rubric bump: a job scored under v2 and matched but not
  * yet reported would stop joining, and would never be reported at all. Taking the latest score
@@ -38,7 +45,7 @@ export function pendingDigestItems(
          FROM jobs j
          JOIN companies c ON c.id = j.company_id
          JOIN job_scores s ON s.job_id = j.id
-        WHERE j.state = 'MATCHED'
+        WHERE j.state NOT IN ('DISCOVERED', 'SCORED', 'REJECTED', 'EXPIRED', 'REJECTED_BY_USER')
           AND j.digested_at IS NULL
           AND s.prompt_version = (
             SELECT MAX(prompt_version) FROM job_scores WHERE job_id = j.id

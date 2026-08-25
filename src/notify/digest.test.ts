@@ -155,6 +155,20 @@ test('a re-scored job is reported once, with its newest score', () => {
   db.close();
 });
 
+test('a job the contacts stage has advanced is still reported', () => {
+  // The digest used to select `state = 'MATCHED'`. When the contacts stage started moving
+  // matched jobs to DRAFTED and NEEDS_CONTACT, 52 undigested matches silently stopped
+  // appearing — no error, no empty-digest warning, nothing.
+  const db = openDb(':memory:');
+  const drafted = seedMatch(db, { title: 'Backend Intern', fit: 88 });
+  const needsContact = seedMatch(db, { title: 'ML Intern', fit: 82, company: 'Beta' });
+  transition(db, drafted, 'MATCHED', 'DRAFTED');
+  transition(db, needsContact, 'MATCHED', 'NEEDS_CONTACT');
+
+  const ids = pendingDigestItems(db).map((i) => i.job.id);
+  assert.deepEqual(ids, [drafted, needsContact]);
+});
+
 test('a job the current rubric would reject is not reported at all', () => {
   // MATCHED is set by whichever rubric was current at the time, and there is no edge back
   // out of it — REJECTED is terminal by design. So after the v4 rubric change most of a
