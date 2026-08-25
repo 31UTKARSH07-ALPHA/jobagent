@@ -18,6 +18,7 @@
  * A model that returns `[Your Name]` has produced valid JSON and an unusable email.
  */
 import { chat } from '../llm/groq.ts';
+import { normaliseCompanyName } from '../ingest/resolve-company.ts';
 import { modelFor } from '../llm/models.ts';
 import { profileForPrompt } from '../match/score.ts';
 import type { Job, JobScore, Profile } from '../store/schema.ts';
@@ -132,9 +133,13 @@ export function problemsWith(draft: DraftResult, profile: Profile, company: stri
   if (words < MIN_BODY_WORDS) problems.push(`body is ${words} words, too short to say anything`);
   if (words > MAX_BODY_WORDS) problems.push(`body is ${words} words, too long to be read`);
   if (!draft.body.includes(profile.name)) problems.push('the candidate never signs their name');
-  if (!`${draft.subject} ${draft.body}`.toLowerCase().includes(company.toLowerCase().split(' ')[0] ?? '')) {
-    problems.push('the company is never named');
-  }
+  // Compared through the same normalisation the rest of the project uses, because the raw
+  // name carries punctuation the email never will. "Azuga, Inc." was looked up literally as
+  // `azuga,` — comma included — and a perfectly good draft naming Azuga three times was
+  // rejected twice and thrown away.
+  const stem = normaliseCompanyName(company).split(' ')[0] ?? '';
+  const written = `${draft.subject} ${draft.body}`.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  if (stem.length >= 3 && !written.includes(stem)) problems.push('the company is never named');
   // The resume lists no employment, so any claim of it is invented. Checked literally
   // because this is the single most damaging thing the model could write.
   if (profile.experience.length === 0 && /\b(years? of (professional )?experience|at my (last|previous|current) (job|company|role)|when I worked at)\b/i.test(draft.body)) {

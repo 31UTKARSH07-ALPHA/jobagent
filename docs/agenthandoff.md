@@ -13,9 +13,17 @@ Do not restate architecture here. Point at `docs/architecture.md`.
 
 ## Now
 
-**Phase 1 works and is scheduled.** 90 jobs scored under rubric v4, 74 matched, 16 rejected,
-78 companies. 186 tests green, `tsc --noEmit` clean, tree clean, all pushed. Repo lives at
-`~/jobagent` and must never move under Desktop/Documents/Downloads (018a).
+**Phase 2 is built and has run for real.** 2026-08-25: 67 matched jobs have a verified domain
+and a contact, **8 real drafts are sitting in his Gmail**, nothing has been sent and nothing
+can be — `drafts.send` does not exist outside Phase 3. 264 tests green, `tsc --noEmit` clean,
+tree clean, all pushed. Full pipeline runs end to end in **3m24s**. Decisions 030–032.
+
+| | |
+|---|---|
+| Companies with a verified domain | 64 of 83 (was 5) |
+| Contacts | 27 high · 1 medium · 34 guessed |
+| Jobs ready to draft | 67 |
+| Jobs with no verified domain | 11, retrying every 3 days |
 
 **Read `SUMMARY.md` if you want the project in plain language.** It is written for Utkarsh, not
 for you, and it is the fastest way to get oriented.
@@ -35,34 +43,42 @@ digest, and the cause sitting in `runs.errors` where nobody looked:
 | gate trusted one host; budget starved the best source | 3 days | 025 |
 | the Gmail path never received the deadline | 1 day | 028 |
 | the Groq path never received it either (2.9h on 3 jobs) | 1 day | 029 |
+| the contacts stage hid 52 matches from the digest | 0 days | 031 — caught before a run |
 
-**Three of those were caused by the fix before them.** 025 and 028 both record the same lesson
-at different levels: bounding a thing only bounds the paths you actually bounded, and a limit
-without an ordering just moves the bottleneck. Before adding a limit, work out what it makes
-the *new* first thing to fail.
+**Three of those were caused by the fix before them,** and the last one nearly joined the
+list: moving matched jobs to `DRAFTED` quietly emptied the digest, which selected
+`state = 'MATCHED'`. It was caught by asking "what reads this state?" rather than by anything
+failing. Before adding a limit or a state, work out what it makes the *new* first thing to
+fail.
 
-**As of 2026-08-24 that loop is finally closed** — `[health] reported 2 new problem(s)` in that
-morning's log is the first time the pipeline announced its own breakage on the day it happened
-(026). Trust the alert, not the exit code.
+**As of 2026-08-24 the alerting loop is closed** — `[health] reported 2 new problem(s)` was
+the first time the pipeline announced its own breakage on the day it happened (026). Trust the
+alert, not the exit code.
 
-### The state of the last run
+### What Phase 2 turned out to be about
 
-08-25 06:10 ran for **four hours** and both fixes in it were half-right, which is the useful
-part:
+Not the cascade. **Domains.** 73 of the 78 matched jobs sat on `.unknown.invalid` markers
+because they came from LinkedIn and Naukri alert mail, whose URLs name no company domain — and
+every rung of the contact cascade keys off a domain. `src/contacts/domain.ts` is the piece
+`phases.md` did not plan for and could not have worked without.
 
-- **028 worked.** `gmail-alert: 59 kept in 933s` — the Gmail source honoured its deadline and
-  logged a line, where the morning before it hung and logged nothing at all.
-- **But scoring took 2.9 hours on three jobs**, because Groq was the last path with no
-  deadline. Fixed the same day (029). **Unverified — the 08-26 06:00 run is its first test.**
+The rule that survived contact with reality is in 030: **guessing is fine, believing a guess is
+not.** Every candidate — heuristic or model-proposed — must publish MX records *and* have the
+company's whole name on its live home page. That caught two parked domains and three
+English-word false positives (`chai.com` for Chai Point) out of 69 companies.
 
-Every network call in the project now honours a deadline. That specific class of bug should be
-closed; if a run overruns again, the first question is which new I/O path was added.
+### The state of the last runs
+
+- **contacts, 08-25:** 5m45s, 0 errors, 78 companies, 67 jobs advanced.
+- **draft, 08-25:** 128s, 8 drafts written into Gmail, 0 errors, 0 sent.
+- **full dry run, 08-25:** 3m24s, one draft rejected for "the company is never named" —
+  the checker was matching `azuga,` with the comma. Fixed and verified.
 
 ## In flight
 
 Nothing. Clean tree, no partial work.
 
-## Read decisions 012–029 before touching the scorer, the digest, the parsers or the schedule
+## Read decisions 012–032 before touching the scorer, the digest, the parsers, the contacts stage or the schedule
 
 Things a fresh session would otherwise undo, all measured rather than assumed:
 
@@ -111,6 +127,25 @@ Things a fresh session would otherwise undo, all measured rather than assumed:
 - **`STAGE_BUDGET_MS['digest']` must exceed the send's worst case** (025). Four attempts × a
   20s timeout plus the 2+8+32s ladder is ~122s per message part, and a ten-match digest is two
   or three parts. At 5 minutes the budget was killing the retries it existed to permit.
+- **Two Groq calls deliberately do not use structured output** — the domain lookup (030) and
+  the drafter (032). Strict `json_schema` mode returned `400` on 10 of 12 domain lookups and on
+  2 of the first 3 drafts, in both cases for the *correct* answer: an empty string for "I don't
+  know", and a long multi-line email body. A schema is right for the scorer's four integers and
+  wrong for a text-shaped answer. Do not "fix" these back to `complete()`.
+- **`reasoning_effort: 'low'` on drafting is not a micro-optimisation** (032). Left at the
+  default, `gpt-oss-120b` spent 774 of its 900 tokens thinking and returned a truncated email;
+  the thinking is billed *inside* `max_tokens`, not beside it. Low takes it to 15 tokens and
+  1.8s per draft. And `finish_reason: 'length'` is now an error rather than a half-written
+  result, which matters to the scorer too.
+- **Never pass `job_scores.reasoning` into a draft prompt** (032). It is written in the rubric's
+  voice — "a final-year student can take this role" — and the model repeated that to a
+  recruiter as fact. His resume says 2024–2027. The hook is what the draft needs; the reasoning
+  is for him.
+- **A high-confidence rung can auto-send, so what it accepts matters more than what it finds**
+  (031). Two addresses got through that should not have: customer-service desks
+  (`support@`, `customercare@`), and *another company's* mailbox — an aggregator's page listing
+  `jobs.accommodations@sandisk.com`. A page can name any address it likes; that does not make
+  it the page owner's.
 - **The plist is generated, never committed** (018), because every path in it is specific to
   this laptop. `--print` shows exactly what `--install` writes. Do not hand-edit the installed
   file — `--install` overwrites it. And `RunAtLoad` stays `false`: loading the agent must not
@@ -119,12 +154,15 @@ Things a fresh session would otherwise undo, all measured rather than assumed:
 ## Coverage problem worth understanding before building more
 
 102 of 153 hand-picked candidate companies have **no board on Greenhouse/Lever/Ashby/
-Workable** — including nearly every large Indian company (Zomato, Swiggy, Flipkart,
-Zerodha, Razorpay, Freshworks, Zoho). They run their own portals, Workday or Darwinbox.
+Workable** — including nearly every large Indian company (Zomato, Swiggy, Flipkart, Zerodha,
+Razorpay, Freshworks, Zoho). They run their own portals, Workday or Darwinbox. So the 51
+verified boards skew global/remote, and Indian coverage comes from `src/ingest/gmail-alerts.ts`.
+That makes Gmail OAuth **the** blocker for a useful digest. Full reasoning in 010.
 
-So the 51 verified boards skew global/remote, and Indian coverage has to come from
-`src/ingest/gmail-alerts.ts`. That makes Gmail OAuth **the** blocker for a useful digest.
-Full reasoning in `docs/decisions.md` 010.
+**The downstream half of this is now solved.** Alert-sourced companies arrive as a bare name
+with no domain, which used to mean no contact was possible for 94% of matches; `domain.ts`
+resolves 86% of them and proves each one (030). What remains unsolved is *ingest* coverage —
+more Indian postings, not more contacts for the ones already found.
 
 ## Blocked on Utkarsh
 
@@ -145,67 +183,84 @@ pursuing.
 
 ## Next action
 
-**1. Check the 08-26 06:00 run.** First test of 029, and the first run where every network
-path has a deadline.
+**1. Read the eight drafts.** They are in his Gmail Drafts folder right now, and this is the
+only thing that decides whether Phase 2 worked. `phases.md` says it plainly: *done when you
+read ~5 drafts each morning and would genuinely send 3 of them.* Nothing in the code can
+answer that.
+
+What to ask him, per draft: would you send this? If not, is it the **hook** (wrong thing about
+him), the **address** (wrong desk), or the **tone**? Each answer lands somewhere different —
+the hook is `job_scores.hook` and belongs to the scorer, the address is the cascade's ranking
+in `src/contacts/cascade.ts`, the tone is `SYSTEM` in `src/draft/compose.ts`. Do not guess
+which; the whole point of writing eight was to find out.
+
+One thing already visible without asking: **six of the eight subject lines lead with the same
+typeahead project**, because most jobs got the same hook from the scorer. No single recruiter
+sees the repetition, so it is not a bug — but if he wants variety, the fix is in the scorer's
+hook selection, not in the drafter.
+
+**2. Check the 08-26 06:00 run.** First unattended run with contacts and draft in it.
 
 ```
-node src/schedule/launchd.ts --status     # 0 ran · 75 skipped, no network · anything else, read on
-tail -60 logs/daily.log
+node src/schedule/launchd.ts --status
+tail -80 logs/daily.log
 ```
 
-Two things to look for: ingest logs a line per source (`gmail-alert: N kept` missing entirely
-is 028 regressing), and the whole run finishes in minutes rather than hours (029). A Telegram
-message about failures means 026 is working — that is the system behaving, not a new problem.
+Expect ~4 minutes, `[contacts]` and `[draft]` lines, and 8 more drafts. Two specific things
+that would be new-bug shaped: a `[draft]` fault naming the same company every morning, or
+`[contacts] domain_unresolved` climbing past the 11 known misses.
 
-**2. The Gmail token expiry is unproven until 1 September** — see *Blocked on Utkarsh*.
+**3. The Gmail token expiry is unproven until 1 September** — see *Blocked on Utkarsh*.
 
-**3. Two open questions that need Utkarsh, not code.** Both are recorded in full in 027 and
-024; neither should be guessed at:
+**4. Two open questions that still need Utkarsh, not code.**
 
-- **The digest backlog.** 46 matches are queued against `MAX_ITEMS_PER_DIGEST = 10`, so about
-  five days of it, and 57 of 90 scores tie at exactly 84 — the tiebreak decides what he
-  actually reads. It is newest-first now (027), which is the right direction for postings that
-  expire, but it starves the tail: Sony Research India's AI Research Intern may never be sent.
-  The honest fix is a **bigger digest** or a queue that **expires** unsent matches after about
-  a week. Not a third ordering. Ask him which.
-- **The Gmail consent screen is still in Testing**, so the token expires every 7 days and takes
-  the main job source with it. Last re-authorised 2026-08-23, so **expect it to die around
-  08-30**. 015a explains why *publishing* fixes this and *verification* is not worth pursuing.
+- **The digest backlog, now sharper.** 67 jobs are ready to draft against
+  `MAX_DRAFTS_PER_RUN = 8`, and the digest shows 10 matches and 5 drafts. That is over a week
+  of queue, and 57 of 90 scores tie at exactly 84, so the tiebreak decides what he reads. It is
+  newest-first (027), right for postings that expire, but it starves the tail. The honest fix
+  is a **bigger digest** or a queue that **expires** unsent matches after about a week. Not a
+  third ordering. Ask him which.
+- **Suppression.** Now real rather than hypothetical: two roles at one company produce two
+  drafts to the *same* address (there is a test asserting exactly that). Convin, Uplers and
+  Spyne each have more than one open role. Does the second one queue for approval, or wait
+  until the first is answered? Phase 3 needs this decided before it can send anything.
 
-**4. Then the real work, and it is a genuine fork.**
+**5. Then the work, and the fork from last session is still open.**
 
+- **Phase 3 — sending.** Everything it needs now exists: `outreach` rows with real
+  `gmail_draft_id`s, contacts with confidence, and a `mx_valid` gate. It starts with
+  `src/send/gate.ts` and the ramp (3/day → 5 → 8, mandatory). **Do not start this until he has
+  read the drafts** — Phase 3 automates sending whatever Phase 2 produces, and if the drafts
+  are wrong it automates being wrong.
 - **The company signal in the rubric (v5).** 57 of 90 jobs score exactly 84 because a title
   like "Software Engineering Intern" tells the model everything and nothing. The employer is
   the evidence being thrown away — a bare "Intern - Engineering" at CoinDCX is worth more than
-  a bare "Intern" at a brewery, and `data/companies.json` already knows which is which. This is
-  the only change that fixes both the tie *and* the false negatives (024), because it adds
-  information rather than re-weighting what is there. Fold in the returnship fix at the same
-  time: `level_fit` currently rates a "ReStart Consultant" career-break programme as a student
-  internship. One rubric version, one ~100-minute re-score, buys both.
-- **Phase 2 — contacts and drafts.** The larger piece and the actual product. Its first problem
-  is already known: `resolveCompany` returns `.unknown.invalid` for most alert-sourced
-  companies, because they are small firms absent from `candidates.ts`. With 78 companies, most
-  from email, the cascade has to *find* a domain from a name rather than assume one exists.
+  a bare "Intern" at a brewery. This is the only change that fixes both the tie *and* the false
+  negatives (024). Fold in the returnship fix at the same time: `level_fit` rates a "ReStart
+  Consultant" career-break programme as a student internship. One rubric version, one
+  ~100-minute re-score, buys both. **It is also worth more now than it was**, because the score
+  no longer just orders a digest — it decides which 8 jobs get an email written.
 
-Sharpening the rubric makes what exists better; Phase 2 adds what the project is actually for.
-**Utkarsh has not chosen between them** — the last session offered both and he did not answer.
-
-**5. Nothing is knowingly unfixed.** As of 029 every network call honours a deadline. The four
-entries 022 → 025 → 028 → 029 are all the same bug found one path at a time; if a run overruns
-again, the question to ask is which I/O path was added since.
+**6. Nothing is knowingly unfixed.** Every network call honours a deadline (029), and the
+contacts and draft stages were built with `ctx.signal` plumbed from the start plus their own
+per-company budget. If a run overruns, the question is still which I/O path was added since.
 
 Deliberately deferred:
-- `src/match/embed.ts` — bge-small prefilter. At 5 jobs/day scoring everything is cheaper
-  than installing ~500MB of ONNX runtime. Revisit after Gmail alerts land; the TPM ceiling
-  in decision 013 is what will make a prefilter start earning its keep.
+- `src/match/embed.ts` — bge-small prefilter. At ~5 new jobs a day, scoring everything is
+  cheaper than installing ~500MB of ONNX runtime. The TPM ceiling in 013 is what will make it
+  earn its keep, and drafting now shares that same budget.
+- **GitHub commit-log mining.** The cascade asks GitHub only for an org's public email, which
+  found exactly 1 contact in 78 companies. Mining commits costs three more requests against an
+  unauthenticated 60/hour limit and yields an engineer's address rather than anyone who hires.
+  Revisit only if the team-page rung stops working.
 - More ATS coverage — add names to `src/ingest/candidates.ts`, run
   `node src/ingest/refresh-companies.ts`. It only *adds* verified boards; a company is
   removed only when a probe confirms it is gone, never when a probe errors.
 
-Deps installed so far: `zod`, `unpdf`, `typescript`, `@types/node`. No LLM SDK — Groq
-speaks the OpenAI chat shape, so `src/llm/groq.ts` is plain `fetch`. The rest (`googleapis`,
-`@huggingface/transformers`, `grammy`) gets installed when the stage that needs it is
-written, not before.
+Deps installed so far: `zod`, `unpdf`, `typescript`, `@types/node`, `@googleapis/gmail`. No LLM
+SDK — Groq speaks the OpenAI chat shape, so `src/llm/groq.ts` is plain `fetch`. The rest
+(`@huggingface/transformers`, `grammy`) gets installed when the stage that needs it is written,
+not before.
 
 ## Context not captured in code
 
@@ -223,12 +278,20 @@ written, not before.
   touching state, and prints the jobs whose state no longer agrees with their score.
 - v1 and v2 score rows are in the DB and should be ignored for calibration. v1 was scored at
   temperature 1.0 (decision 012); v2 predates the title-only clamp (016).
+- **One hand-edit on 2026-08-25**, the second ever: job 30 was reset `DRAFTED → MATCHED` and a
+  bad contact row deleted, to re-run it after the SanDisk fix in 031. Safe only because no
+  `outreach` row existed. The state machine has no such edge on purpose and no stage may do it.
 
 ## Open questions not yet settled
 
 - Daily send cap: architecture says ramp to 8/day; original ask was 10–20. Not resolved.
 - Follow-ups: one at day 4, or none in v1?
-- Suppression: second role at an already-emailed company — approval queue, or skip?
+- Suppression: second role at an already-emailed company — approval queue, or skip? **No longer
+  hypothetical:** the draft stage writes one email per job, so two roles at one company are two
+  drafts to the same address today. Phase 3 must resolve this before it sends.
+- Whether a `careers@` guess is worth sending at all. 34 of 62 contacts are guesses; they can
+  never auto-send, so every one of them is a tap he has to make. If he ignores them in
+  practice, the cascade should stop producing them rather than fill the queue.
 
 ---
 

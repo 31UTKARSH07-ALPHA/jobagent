@@ -35,6 +35,9 @@ node src/gmail/auth.ts                 # authorise Gmail (opens a browser, once)
 node src/gmail/auth.ts --status        # which account, which scopes
 node src/gmail/messages.ts --query="from:naukri.com" --links --full   # inspect real mail
 
+node src/contacts/domain.ts --name="Convin" [--llm]  # name → verified domain, prints candidates
+node src/draft/index.ts --job=12                     # compose one draft, print it, write nothing
+
 ./scripts/run-daily.sh                 # exactly what launchd runs at 06:00
 node src/schedule/launchd.ts --status  # loaded? last exit code? how many runs?
 node src/schedule/launchd.ts --install # (re)write and load the agent; --uninstall removes it
@@ -75,6 +78,15 @@ node src/schedule/launchd.ts --install # (re)write and load the agent; --uninsta
   company and location alone (decision 016). Naukri's parser reads the URL *slug*, not the
   visible text, which truncates the company name.
 - Contacts are cached per **company**, not per job. Assume the cache is warm.
+- **A guessed domain is never believed without proof** — MX records *and* the company's whole
+  name on its live home page (decision 030). Two of 69 candidate domains were parked pages that
+  resolve and serve HTML, and three more were English words on somebody else's site.
+- **Two Groq calls deliberately skip structured output**: the domain lookup and the drafter.
+  Strict `json_schema` mode 400s on an empty answer and on a long multi-line body — it is right
+  for the scorer's four integers and wrong for text (decisions 030, 032).
+- **Drafting sets `reasoning_effort: 'low'`.** The thinking is billed inside `max_tokens`, not
+  beside it: at the default this model spent 774 of 900 tokens reasoning and returned a
+  truncated email (032).
 - **The repo lives at `~/jobagent` and must never move under `~/Desktop`, `~/Documents` or
   `~/Downloads`.** macOS TCC grants Terminal access to those folders, not launchd, so the
   06:00 run dies at `exec` with `Operation not permitted` (exit 126) while every hand-run

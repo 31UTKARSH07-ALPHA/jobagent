@@ -13,8 +13,10 @@ Last updated 2026-08-24.
 Every morning at 6am, a program on this laptop wakes up, collects new software-engineering
 internships from job boards and from job-alert emails, reads each one against Utkarsh's
 resume, decides which are actually worth applying to, and sends the best ones to his phone on
-Telegram. That part works today. The next part — finding the recruiter's email address and
-writing a personalised cold email to them — is built next.
+Telegram. As of 25 August it also finds the company's real website, digs out an email address
+worth writing to, and **writes the cold email itself — saved as a draft in your Gmail, never
+sent.** What it cannot do, by design, is send anything: that needs your approval and is the
+next phase.
 
 ## Why it exists
 
@@ -41,13 +43,26 @@ approval.
         ↓
   3.  DECIDE    do the arithmetic; good enough → keep it, not → reject it forever
         ↓
-  4.  REPORT    send the best 10 to Telegram
+  4.  FIND      work out the company's real website, then an address worth writing to
+        ↓
+  5.  WRITE     draft the email and save it in Gmail — nothing is sent
+        ↓
+  6.  REPORT    send the best 10 to Telegram, with the drafts to review
         ↓
         if anything broke, say so — once
 ```
 
-Steps for finding contacts, drafting emails and sending them exist as empty placeholders in
-the same list. They run, do nothing, and log that they are not built yet.
+Only the last step, sending, is still a placeholder. It runs, does nothing, and logs that it is
+not built yet.
+
+### Why nothing sends yet, on purpose
+
+The program can write into your Gmail but it physically cannot send. There is one function for
+sending and it does not exist yet. Everything it writes lands in your Drafts folder, where you
+read it, change it, or delete it. **A cold email to a stranger is not reversible**, so a human
+sees every one before it goes — and when sending is built, it will still only send by itself
+when the address was published on the company's own site *and* the job scored above 85.
+Everything else waits for you to tap approve.
 
 ### Where the jobs come from
 
@@ -127,19 +142,39 @@ database. Nobody looked, because nothing asked anyone to look. **That is why the
 now message you when it breaks** — once per problem, never a daily "all fine" that you would
 learn to ignore.
 
-**Phase 2 — contacts and drafts.** Not started. Finding a recruiter's email address, and
-writing the actual cold email.
+**Phase 2 — contacts and drafts.** ✅ Built 2026-08-25. Eight real drafts are in your Gmail
+right now. It is not *finished* until you read them and say whether you would send them.
 
-**Phase 3 — sending.** Not started. Approval buttons in Telegram, a daily cap, a slow ramp-up,
-and watching for replies.
+It turned out to be about something nobody planned for. **73 of the 78 matched jobs had no
+company website attached** — they came from LinkedIn and Naukri alert emails, and those emails
+link to LinkedIn and Naukri, never to the company. Every way of finding an email address starts
+from a website, so before anything else could work, the program had to turn a name like
+"Berryworks Kochi Adoor" into a real domain.
+
+The rule it follows is worth knowing, because it is what keeps you out of trouble: **guessing a
+website is fine, believing the guess is not.** Every guess has to pass two tests — the domain
+must be set up to receive email at all, and its actual home page must say the company's name.
+Out of 69 companies it got 59 right, and the two tests caught real mistakes: two of the guessed
+domains were for-sale parking pages, and three others were ordinary English words belonging to
+somebody else (a tea shop called Chai, a sock company called Stance).
+
+Where it cannot prove a website, it says so and writes nothing. Eleven jobs are in that state.
+
+**Phase 3 — sending.** Not started, and deliberately not started yet: it automates sending
+whatever Phase 2 writes, so if the drafts are wrong it would automate being wrong. Read the
+eight first. After that it is approval buttons in Telegram, a daily cap, a slow ramp-up from
+three a day, and watching for replies.
 
 ### Where it stands today
 
-- **90 jobs** scored, 74 kept, 16 rejected, across **78 companies**
-- **42 runs** recorded, **26 jobs** reported to the phone so far
-- **~6,000 lines** of program, **~3,200 lines** of tests (185 of them), **32 commits**
-- **27 written decisions** explaining why things are the way they are
+- **91 jobs** scored, 67 ready to write to, 11 waiting on a website, 17 rejected
+- **64 of 83 companies** now have a proven website, up from 5
+- **62 contacts**: 28 published on a real page, 34 educated guesses at `careers@`
+- **8 drafts written into Gmail.** None sent. Nothing can send yet
+- **265 tests**, all passing. **30 written decisions** explaining why things are as they are
 - **Total cost: ₹0.** Everything runs on free tiers
+
+**The whole morning now takes about three and a half minutes.**
 
 ---
 
@@ -195,11 +230,28 @@ and watching for replies.
 | `src/llm/models.ts` | Which AI model does which job. The names are checked against the live service, never remembered. |
 | `src/llm/rate-limit.ts` | The free AI plan allows about two requests a minute. This waits for room rather than being refused — which is why scoring takes about 67 seconds per job. |
 
+### Finding someone to write to
+
+| File | In plain terms |
+|---|---|
+| `src/contacts/domain.ts` | Turns a company *name* into its real website, and proves it before believing it. Tries the obvious guesses first (free, instant), asks the AI only for the ones that fail, and tests every answer the same way. |
+| `src/contacts/verify.ts` | Asks the internet whether a domain can receive email at all. Cheap, and it caught two for-sale parking pages pretending to be companies. |
+| `src/contacts/cascade.ts` | Looks for an address in four places, best first: the job posting, the company's own website, its GitHub page, and finally an educated guess at `careers@`. Refuses addresses at the wrong desk — `sales@`, `support@`, and anything that belongs to a different company. |
+| `src/contacts/index.ts` | The find-a-contact step. Does the work once per company however many jobs are open there, and gives up on a company after three tries across nine days. |
+
+### Writing the email
+
+| File | In plain terms |
+|---|---|
+| `src/draft/compose.ts` | Writes the email. Then *checks its own output* and rewrites it once if it finds a problem — a leftover `[Your Name]`, an unsigned email, or a claim the resume does not support. It once wrote "as a final-year student", which your resume never says; that check exists because of it. |
+| `src/draft/gmail-draft.ts` | Puts the finished email into Gmail as a draft. This is the only part of the program that can write to your account, and it has no ability to send. |
+| `src/draft/index.ts` | The writing step. Eight a morning, best-scoring first, and one email per job ever. |
+
 ### Talking to Utkarsh
 
 | File | In plain terms |
 |---|---|
-| `src/notify/digest.ts` | Builds and sends the morning message. A job appears exactly once, ever. |
+| `src/notify/digest.ts` | Builds and sends the morning message. A job appears exactly once, ever — and from now on it also lists the drafts waiting in Gmail, marking clearly which addresses were guessed. |
 | `src/notify/telegram.ts` | Sends Telegram messages, retrying if the network wobbles. |
 | `src/notify/health.ts` | Messages when something is newly broken, and stays silent otherwise. A problem that lasts a fortnight costs one message, not fourteen. |
 
@@ -232,12 +284,32 @@ Nothing. The AI runs on Groq's free plan, Gmail and Telegram are free, and the d
 single file on the laptop. The one deliberate escape hatch, if the emails turn out to need
 better writing, is about $3.75 a month for a stronger model — one file would change.
 
+## What to do next
+
+**Read the eight drafts in your Gmail Drafts folder.** That is the whole test of this phase.
+For each one, the useful question is not "is it good" but *would you send this* — and if not,
+which part is wrong:
+
+- the **opening fact** about you is the wrong one → that comes from the scoring step
+- the **address** is the wrong person → that comes from the contact search
+- the **tone** is off → that is the email-writing instructions, one file
+
+Those are three different fixes in three different places, and guessing which is why eight were
+written rather than one.
+
+One thing you will notice: six of the eight lead with the same typeahead project, because the
+scorer picked the same fact for most jobs. No recruiter sees more than one of them, so it does
+no harm — but if you want more variety, that is a scoring change, not a writing one.
+
 ## When something looks wrong
 
 ```
 cd ~/jobagent
 node src/schedule/launchd.ts --status    # did this morning's run happen? did it work?
 tail -40 logs/daily.log                  # what actually happened
+
+node src/draft/index.ts --job=12         # see what it would write about one job
+node src/contacts/domain.ts --name="Convin"   # see how it works out a company's website
 ```
 
 The two most common problems, both seen repeatedly:

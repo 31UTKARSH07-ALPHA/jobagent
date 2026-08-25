@@ -83,6 +83,14 @@ test('an email that never names the company is caught', () => {
   assert.ok(problemsWith(draft({ body: anonymous }), profile, 'Acme').includes('the company is never named'));
 });
 
+test('punctuation in the company name does not fail a good draft', () => {
+  // "Azuga, Inc." was searched for literally as `azuga,` — comma included — so a draft that
+  // named Azuga three times was rejected twice and thrown away.
+  const body = draft().body.replace('Hi Acme team,', 'Hi Azuga team,');
+  assert.deepEqual(problemsWith(draft({ body }), profile, 'Azuga, Inc.'), []);
+  assert.deepEqual(problemsWith(draft({ body }), profile, 'Azuga Technologies Pvt Ltd'), []);
+});
+
 test('invented work experience is caught', () => {
   // The resume lists no employment, so any claim of it is a fabrication — and it is the one
   // mistake in a first cold email that cannot be walked back.
