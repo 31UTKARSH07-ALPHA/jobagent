@@ -134,6 +134,17 @@ export type ChatOptions = {
   temperature?: number;
   /** JSON Schema for strict structured output. Set by `complete`; rarely passed directly. */
   responseSchema?: { name: string; schema: Record<string, unknown> };
+  /**
+   * How much of `max_tokens` the model may spend thinking before it answers.
+   *
+   * These are reasoning models and the thinking is billed inside the output budget, not
+   * beside it. Measured 2026-08-25 on `gpt-oss-120b` with `max_tokens: 900`: the default
+   * spent **774 tokens reasoning** and returned a truncated 583-character answer; the same
+   * request at `'low'` spent **15** and finished cleanly. Drafting sets this because an
+   * email is a long output that needs almost no deliberation — the judgement was already
+   * made by the scorer.
+   */
+  reasoningEffort?: 'low' | 'medium' | 'high';
   timeoutMs?: number;
   retries?: number;
   /**
@@ -148,8 +159,8 @@ export type ChatOptions = {
 };
 
 type GroqResponse = {
-  choices: { message: { content: string } }[];
-  usage?: { total_tokens?: number };
+  choices: { message: { content: string }; finish_reason?: string }[];
+  usage?: { total_tokens?: number; completion_tokens_details?: { reasoning_tokens?: number } };
   error?: { message: string; failed_generation?: string };
 };
 
@@ -169,6 +180,7 @@ export async function chat(opts: ChatOptions): Promise<string> {
   };
 
   if (opts.temperature !== undefined) body['temperature'] = opts.temperature;
+  if (opts.reasoningEffort !== undefined) body['reasoning_effort'] = opts.reasoningEffort;
 
   if (opts.responseSchema) {
     body['response_format'] = {
@@ -258,6 +270,21 @@ export async function chat(opts: ChatOptions): Promise<string> {
         lastError = new GroqError(res.status, 'response had no message content');
         continue;
       }
+
+      // `finish_reason: 'length'` means the answer stops mid-sentence. Returning it would
+      // hand the caller a half-written email or a JSON fragment and call it success — which
+      // is how a 583-character stub reached the draft checker as "too short to say
+      // anything" rather than as the truncation it was. Retried, because reasoning length
+      // varies run to run and the next attempt may well fit.
+      if (payload.choices[0]?.finish_reason === 'length') {
+        lastError = new GroqError(
+          res.status,
+          `reply was cut off at max_tokens (${String(body['max_tokens'])}) — ` +
+            `${payload.usage?.completion_tokens_details?.reasoning_tokens ?? '?'} of them spent reasoning`,
+        );
+        continue;
+      }
+
       return content;
     } catch (err) {
       if (err instanceof GroqError && !isRetryable(err)) throw err;
