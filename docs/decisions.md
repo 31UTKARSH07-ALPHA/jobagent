@@ -1223,3 +1223,60 @@ internet, which is a slow test today and a flaky one on a plane.
 after the SanDisk fix, and the bad contact row deleted. Safe only because no `outreach` row
 existed. The state machine has no such edge on purpose — this is the same category of
 intervention as the 2026-08-10 reset, and no stage may ever do it.
+
+---
+
+## 032 — Drafting: plain text into Gmail drafts, and the digest as the review queue
+
+**Decision.** `src/draft/` composes the email with Groq and writes it into Gmail with
+`drafts.create` — never `messages.send`, from anywhere, ever (invariant 1). The digest then
+carries the drafts, which is what makes them get read.
+
+**First real run, 2026-08-25:** 8 drafts written into the account in 128 seconds, 0 errors, 0
+sent. `UNIQUE(job_id)` on `outreach` means a job can have one draft ever; the stage skips any
+job that already has a row rather than relying on the constraint to catch it.
+
+**Order of operations is load-bearing.** The Gmail draft is created *before* the `outreach`
+row is written. Reversed, a Gmail failure would leave a row claiming a draft that does not
+exist — and `UNIQUE(job_id)` would then block the retry that would have fixed it. As written,
+a failure leaves no row at all and tomorrow tries again.
+
+**Three things the model got wrong before this was usable**, all found by running it rather
+than by reading it:
+
+1. **Structured output 400s on an email.** Asked for `{subject, body}` under strict JSON
+   schema, Groq returned `400 Failed to generate JSON` on two of the first three real
+   postings. A body is a long multi-line string, which is the hardest thing for strict mode
+   to emit. Now it replies as `Subject: …` + blank line + body, parsed with a regex and a
+   slice. Second time this project has had to back out of structured output for a
+   text-shaped answer — see 030.
+2. **The model spent its budget thinking.** `gpt-oss-120b` used **774 of 900 tokens** on
+   reasoning and returned a truncated email, which reached the draft checker as "too short to
+   say anything" rather than as truncation. `reasoning_effort: 'low'` cuts that to **15
+   tokens**, and a draft now takes 1.8s instead of 55s. Separately, `finish_reason: 'length'`
+   is now an error in `src/llm/groq.ts` rather than a silently half-written result — that
+   affects the scorer too.
+3. **It wrote "As a final-year student", which his resume does not say.** The claim came from
+   `job_scores.reasoning`, which is written in the rubric's voice ("a final-year student can
+   take this role") and was being passed in as context. The reasoning is no longer sent, and
+   `problemsWith()` rejects a year-of-study claim that does not appear in the profile.
+
+**Generated is not the same as send-worthy.** `problemsWith()` runs on every draft and rejects
+placeholders, an unsigned email, an unnamed company, invented employment, and invented dates;
+a rejected draft is regenerated **once with the specific complaints attached**, because Groq
+has no seed (012) and a blind retry is a coin flip while a named fault is something to correct.
+
+**No `From` header.** `data/profile.json` holds his college address and the authorised account
+is his personal Gmail. Gmail honours a `From` only for a verified alias, and checking that
+needs `gmail.settings.basic` — a scope 015 deliberately did not take. Omitted, Gmail fills in
+the account that can actually receive the reply.
+
+**The digest needed a second marker, exactly as migration 003 predicted.** `jobs.digested_at`
+reports a job once ever, so a job reported as a match on Monday and drafted on Thursday would
+have its email written and never mentioned to anybody — and with a 67-job backlog against 8
+drafts a run, that is most drafts. Migration 005 adds `outreach.digested_at`, set only after
+Telegram accepts the message, the same idiom and for the same reason.
+
+**A draft shown inline under its own match is not repeated in the drafts section**, and the
+`(guessed)` label appears on every low-confidence address, every time. That label is the only
+thing standing between a pattern guess and the assumption that an address was verified.

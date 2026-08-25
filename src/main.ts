@@ -20,6 +20,7 @@ import type { Stage, StageContext } from './stage.ts';
 import { runIngest } from './ingest/index.ts';
 import { runScore } from './match/score.ts';
 import { runContacts } from './contacts/index.ts';
+import { runDraft } from './draft/index.ts';
 import { runDigest } from './notify/digest.ts';
 import { reportFaults } from './notify/health.ts';
 
@@ -73,6 +74,10 @@ export const STAGE_BUDGET_MS: Record<string, number> = {
   // that have never been looked up before — 0.5 to 11 seconds each, measured live. The
   // per-company budget inside the stage is what stops one dead host from taking all of it.
   contacts: 15 * 60_000,
+  // Eight drafts at ~2s each once `reasoning_effort` is low, plus a Gmail write apiece. The
+  // headroom is for the token pacer: drafting shares the same 8,000/min window as scoring,
+  // so a draft can legitimately sit waiting for room (decision 017).
+  draft: 20 * 60_000,
 };
 
 export const DEFAULT_STAGE_BUDGET_MS = 10 * 60_000;
@@ -82,7 +87,7 @@ export const STAGES: Record<string, Stage> = {
   prefilter: notYet(1, 'bge-small embeddings + cosine top ~30'),
   score: { phase: 1, run: runScore },
   contacts: { phase: 2, run: runContacts },
-  draft: notYet(2, 'Groq drafting into Gmail drafts'),
+  draft: { phase: 2, run: runDraft },
   digest: { phase: 1, run: runDigest },
   send: notYet(3, 'gate, daily cap, jittered 09:00 queue'),
   track: notYet(3, 'replies, bounces, follow-ups'),

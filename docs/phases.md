@@ -1,13 +1,11 @@
 # Phases
 
-> **Status: Phase 1 works and is scheduled; Phase 2 not started.** 90 jobs scored under rubric
-> v4, 74 matched, 78 companies, 186 tests. The three weeks since Phase 1's code was "done" went
-> almost entirely on making failures *visible* rather than silent — decisions 019 and 022–028,
-> of which four fixed problems caused by the fix before them. As of 2026-08-24 the pipeline
-> reports its own breakage the same morning (026), which is what makes the rest trustworthy.
-> Every network call now honours a deadline (029). **Next is a genuine fork, and Utkarsh has
-> not chosen:** sharpen the rubric with a company
-> signal (024, fixes the 57-way tie at 84), or start Phase 2. See `agenthandoff.md`.
+> **Status: Phase 2 code is complete and has run for real; it has not yet run unattended.**
+> 2026-08-25: 67 matched jobs have a verified domain and a contact, 8 real drafts sit in Gmail,
+> 264 tests. The pipeline now goes ingest → score → contacts → draft → digest end to end.
+> **What is not yet known is whether the drafts are any good** — that is Phase 2's actual
+> done-when, and it needs Utkarsh to read them. Nothing sends: `drafts.send` does not exist
+> outside Phase 3. Decisions 030–032 cover the work; `agenthandoff.md` has the state.
 > Update this header every time a phase completes. It is the first thing read each session.
 
 Ship each phase end-to-end before starting the next. A working Phase 1 already removes
@@ -101,9 +99,11 @@ change either the prompt or the weights, so the old distribution survives for co
 - [x] `src/contacts/verify.ts` — MX check via `dns/promises`
 - [x] Confidence assignment (see `CLAUDE.md` invariant 3)
 - [x] `src/contacts/index.ts` — the stage: per company, per-company budget, 3-day retry
-- [ ] `src/draft/compose.ts` — drafting, uses `job_scores.hook`
-- [ ] Write drafts into Gmail; nothing sends yet
-- [ ] Digest shows drafts inline for review
+- [x] `src/draft/compose.ts` — drafting, uses `job_scores.hook`. Plain text, not structured
+      output, and `reasoning_effort: 'low'` — decision 032 has the measurements
+- [x] `src/draft/gmail-draft.ts` — `drafts.create` only; nothing sends yet
+- [x] Digest shows drafts inline for review, plus a section for drafts whose match was
+      reported on an earlier morning (migration 005)
 
 **Done when:** you read ~5 drafts each morning and would genuinely send 3 of them.
 

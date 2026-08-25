@@ -9,11 +9,28 @@ import { Job, JobScore, nowIso } from './schema.ts';
 import { MATCH_THRESHOLD } from '../match/score.ts';
 import { isUnpaid } from '../ingest/filter.ts';
 
+/**
+ * What the contacts and draft stages did about a job, when they got that far.
+ *
+ * Present from Phase 2: the digest is where drafts are reviewed, so a match he can act on
+ * and a match nobody could find an address for have to be distinguishable at a glance.
+ */
+export type DigestOutreach = {
+  email: string;
+  /** `high` is auto-send eligible in Phase 3; everything else waits for a tap. */
+  confidence: string;
+  /** The drafted subject line, when a draft exists in Gmail. */
+  subject: string | null;
+  /** True when the domain would not verify — no address was even guessed at (030). */
+  unresolved: boolean;
+};
+
 export type DigestItem = {
   job: Job;
   /** Company name; the digest never shows a bare domain. */
   company: string;
   score: JobScore;
+  outreach: DigestOutreach | null;
 };
 
 /**
@@ -41,10 +58,19 @@ export function pendingDigestItems(
 ): DigestItem[] {
   const rows = db
     .prepare(
-      `SELECT j.*, c.name AS company_name, s.*
+      `SELECT j.*, c.name AS company_name, c.domain AS company_domain, s.*,
+              k.email AS contact_email, k.confidence AS contact_confidence,
+              o.subject AS draft_subject
          FROM jobs j
          JOIN companies c ON c.id = j.company_id
          JOIN job_scores s ON s.job_id = j.id
+         LEFT JOIN outreach o ON o.job_id = j.id
+         LEFT JOIN contacts k ON k.id = COALESCE(
+           o.contact_id,
+           (SELECT id FROM contacts WHERE company_id = c.id
+             ORDER BY CASE confidence WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id
+             LIMIT 1)
+         )
         WHERE j.state NOT IN ('DISCOVERED', 'SCORED', 'REJECTED', 'EXPIRED', 'REJECTED_BY_USER')
           AND j.digested_at IS NULL
           AND s.prompt_version = (
@@ -76,6 +102,19 @@ export function pendingDigestItems(
         job: Job.parse(row),
         company: String(row['company_name']),
         score: JobScore.parse(row),
+        outreach:
+          row['contact_email'] === null || row['contact_email'] === undefined
+            ? String(row['company_domain']).endsWith('.unknown.invalid')
+              ? { email: '', confidence: '', subject: null, unresolved: true }
+              : null
+            : {
+                email: String(row['contact_email']),
+                confidence: String(row['contact_confidence']),
+                subject: row['draft_subject'] === null || row['draft_subject'] === undefined
+                  ? null
+                  : String(row['draft_subject']),
+                unresolved: false,
+              },
       }))
       // Unpaid postings are rejected at ingest from now on, but the ones already stored have
       // to be held back too, and REJECTED is terminal so their state cannot be walked back
@@ -89,5 +128,67 @@ export function pendingDigestItems(
 export function markDigested(db: Db, jobIds: number[]): void {
   const at = nowIso();
   const stmt = db.prepare('UPDATE jobs SET digested_at = ? WHERE id = ? AND digested_at IS NULL');
+  for (const id of jobIds) stmt.run(at, id);
+}
+
+/**
+ * A draft written but not yet shown to anybody.
+ *
+ * Separate from {@link DigestItem} because it answers a different question. A digest item
+ * says "here is a job worth your attention"; this says "here is an email waiting in your
+ * Drafts folder". Most mornings a draft belongs to a job that was reported as a match days
+ * ago — `jobs.digested_at` has long since been set — so without this the email would sit in
+ * Gmail unmentioned (migration 005).
+ */
+export type DraftItem = {
+  jobId: number;
+  company: string;
+  title: string;
+  url: string;
+  email: string;
+  confidence: string;
+  subject: string;
+};
+
+/** Drafts awaiting review, newest first — the ones just written are the ones to read. */
+export function pendingDraftItems(db: Db, limit?: number): DraftItem[] {
+  const rows = db
+    .prepare(
+      `SELECT j.id AS job_id, j.title, j.url, c.name AS company,
+              k.email, k.confidence, o.subject
+         FROM outreach o
+         JOIN jobs j ON j.id = o.job_id
+         JOIN companies c ON c.id = j.company_id
+         JOIN contacts k ON k.id = o.contact_id
+        WHERE o.digested_at IS NULL
+          AND o.sent_at IS NULL
+        ORDER BY o.drafted_at DESC, o.id DESC
+        ${limit === undefined ? '' : 'LIMIT ?'}`,
+    )
+    .all(...(limit === undefined ? [] : [limit])) as {
+    job_id: number;
+    title: string;
+    url: string;
+    company: string;
+    email: string;
+    confidence: string;
+    subject: string;
+  }[];
+
+  return rows.map((r) => ({
+    jobId: r.job_id,
+    company: r.company,
+    title: r.title,
+    url: r.url,
+    email: r.email,
+    confidence: r.confidence,
+    subject: r.subject,
+  }));
+}
+
+/** Mark drafts as shown. Called only after the message is actually out. */
+export function markDraftsDigested(db: Db, jobIds: number[]): void {
+  const at = nowIso();
+  const stmt = db.prepare('UPDATE outreach SET digested_at = ? WHERE job_id = ? AND digested_at IS NULL');
   for (const id of jobIds) stmt.run(at, id);
 }

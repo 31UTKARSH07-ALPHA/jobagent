@@ -9,9 +9,9 @@ import { openDb, type Db } from '../store/db.ts';
 import { upsertCompany } from '../store/companies.ts';
 import { upsertJob } from '../store/jobs.ts';
 import { insertScore } from '../store/scores.ts';
-import { pendingDigestItems } from '../store/digest.ts';
+import { pendingDigestItems, pendingDraftItems } from '../store/digest.ts';
 import { transition } from '../store/state.ts';
-import { RawJob, type ScoreResult } from '../store/schema.ts';
+import { RawJob, nowIso, type ScoreResult } from '../store/schema.ts';
 import type { StageContext } from '../stage.ts';
 import { PROMPT_VERSION } from '../match/score.ts';
 import { chunk, escapeHtml, MAX_MESSAGE_CHARS } from './telegram.ts';
@@ -153,6 +153,123 @@ test('a re-scored job is reported once, with its newest score', () => {
   assert.equal(items.length, 1, 'one row per job, not one per score');
   assert.equal(items[0]?.score.fit_score, 74);
   db.close();
+});
+
+test('the digest says what was done about each match', () => {
+  // From Phase 2 this message is where drafts are reviewed, so a match with a draft, a match
+  // with only a guessed address, and a match with no verified domain have to look different.
+  const db = openDb(':memory:');
+  const withDraft = seedMatch(db, { title: 'Backend Intern', fit: 92 });
+  transition(db, withDraft, 'MATCHED', 'DRAFTED');
+  const companyId = (db.prepare('SELECT company_id AS c FROM jobs WHERE id = ?').get(withDraft) as { c: number }).c;
+  db.prepare(
+    `INSERT INTO contacts (id, company_id, email, source, confidence, mx_valid, created_at)
+     VALUES (1, ?, 'careers@acme.com', 'team_page', 'high', 1, ?)`,
+  ).run(companyId, nowIso());
+  db.prepare(
+    `INSERT INTO outreach (job_id, contact_id, subject, body, gmail_draft_id, drafted_at)
+     VALUES (?, 1, 'Backend Intern - 8 ms latency', 'body', 'gd-1', ?)`,
+  ).run(withDraft, nowIso());
+
+  const items = pendingDigestItems(db);
+  const item = items.find((i) => i.job.id === withDraft)!;
+  assert.equal(item.outreach?.subject, 'Backend Intern - 8 ms latency');
+
+  const text = formatDigest(items);
+  assert.match(text, /✍️ careers@acme\.com/);
+  assert.match(text, /1 draft to review/);
+  assert.ok(!text.includes('(guessed)'), 'a team-page address is not a guess');
+});
+
+test('a guessed address says so, every time', () => {
+  // It goes to the approval queue in Phase 3 and can never send itself (invariant 3).
+  const db = openDb(':memory:');
+  const id = seedMatch(db, { title: 'ML Intern' });
+  transition(db, id, 'MATCHED', 'DRAFTED');
+  const companyId = (db.prepare('SELECT company_id AS c FROM jobs WHERE id = ?').get(id) as { c: number }).c;
+  db.prepare(
+    `INSERT INTO contacts (company_id, email, source, confidence, mx_valid, created_at)
+     VALUES (?, 'careers@acme.com', 'pattern', 'low', 1, ?)`,
+  ).run(companyId, nowIso());
+
+  const text = formatDigest(pendingDigestItems(db));
+  assert.match(text, /📮 careers@acme\.com <i>\(guessed\)<\/i>/);
+});
+
+test('a match with no verified domain says why there is no address', () => {
+  const db = openDb(':memory:');
+  const companyId = upsertCompany(db, { name: 'Maiukha', domain: 'maiukha.unknown.invalid' });
+  const { id } = upsertJob(
+    db,
+    companyId,
+    RawJob.parse({
+      company_name: 'Maiukha',
+      company_domain: 'maiukha.unknown.invalid',
+      source: 'gmail-alert',
+      url: 'https://www.linkedin.com/jobs/view/9',
+      title: 'Full Stack Intern',
+      location: 'Bengaluru',
+    }),
+  );
+  insertScore(db, id, PROMPT_VERSION, 84, judgement(), 'test-model');
+  transition(db, id, 'DISCOVERED', 'SCORED');
+  transition(db, id, 'SCORED', 'MATCHED');
+  transition(db, id, 'MATCHED', 'NEEDS_CONTACT');
+
+  assert.match(formatDigest(pendingDigestItems(db)), /🔍 <i>no verified domain/);
+});
+
+test('a draft for an already-reported job still gets shown', async () => {
+  // The case migration 005 exists for: a job reported as a match on Monday and drafted on
+  // Thursday. `jobs.digested_at` reports a job once, so without a marker of its own the
+  // email would sit in Gmail and never be mentioned to anyone.
+  const db = openDb(':memory:');
+  const id = seedMatch(db, { title: 'Backend Intern' });
+  transition(db, id, 'MATCHED', 'DRAFTED');
+  db.prepare('UPDATE jobs SET digested_at = ? WHERE id = ?').run(nowIso(), id);
+  const companyId = (db.prepare('SELECT company_id AS c FROM jobs WHERE id = ?').get(id) as { c: number }).c;
+  db.prepare(
+    `INSERT INTO contacts (id, company_id, email, source, confidence, mx_valid, created_at)
+     VALUES (1, ?, 'careers@acme.com', 'pattern', 'low', 1, ?)`,
+  ).run(companyId, nowIso());
+  db.prepare(
+    `INSERT INTO outreach (job_id, contact_id, subject, body, gmail_draft_id, drafted_at)
+     VALUES (?, 1, 'Backend Intern - 8 ms latency', 'body', 'gd-1', ?)`,
+  ).run(id, nowIso());
+
+  assert.deepEqual(pendingDigestItems(db), [], 'the match itself is old news');
+
+  const sent = fakeSend();
+  const ctx = context(db);
+  await runDigest(ctx, { send: sent.send, config: { token: 't', chatId: '1' } });
+
+  assert.match(sent.calls[0]!, /📬 <b>Drafts waiting in Gmail<\/b>/);
+  assert.match(sent.calls[0]!, /careers@acme\.com <i>\(guessed\)<\/i>/);
+  assert.equal(ctx.counts['reported_drafts'], 1);
+
+  // And exactly once: a second run the same morning has nothing left to say.
+  await runDigest(context(db), { send: sent.send, config: { token: 't', chatId: '1' } });
+  assert.equal(sent.calls.length, 1);
+});
+
+test('a draft shown under its own match is not repeated below it', () => {
+  const db = openDb(':memory:');
+  const id = seedMatch(db, { title: 'Backend Intern' });
+  transition(db, id, 'MATCHED', 'DRAFTED');
+  const companyId = (db.prepare('SELECT company_id AS c FROM jobs WHERE id = ?').get(id) as { c: number }).c;
+  db.prepare(
+    `INSERT INTO contacts (id, company_id, email, source, confidence, mx_valid, created_at)
+     VALUES (1, ?, 'careers@acme.com', 'team_page', 'high', 1, ?)`,
+  ).run(companyId, nowIso());
+  db.prepare(
+    `INSERT INTO outreach (job_id, contact_id, subject, body, gmail_draft_id, drafted_at)
+     VALUES (?, 1, 'Backend Intern - 8 ms latency', 'body', 'gd-1', ?)`,
+  ).run(id, nowIso());
+
+  const text = formatDigest(pendingDigestItems(db), { drafts: pendingDraftItems(db) });
+  assert.equal(text.match(/Backend Intern - 8 ms latency/g)?.length, 1);
+  assert.ok(!text.includes('Drafts waiting in Gmail'));
+  assert.match(text, /1 draft to review/);
 });
 
 test('a job the contacts stage has advanced is still reported', () => {

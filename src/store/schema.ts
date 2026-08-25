@@ -209,6 +209,8 @@ export const Outreach = z.object({
   gmail_message_id: z.string().nullable(),
   gmail_thread_id: z.string().nullable(),
   drafted_at: Timestamp,
+  /** When the draft was shown in a digest for review. null = not shown yet. */
+  digested_at: Timestamp.nullable(),
   /** 09:00 + jitter. Never the pipeline's own run time. */
   scheduled_send_at: Timestamp.nullable(),
   sent_at: Timestamp.nullable(),
