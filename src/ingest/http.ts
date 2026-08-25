@@ -14,6 +14,9 @@ const USER_AGENT =
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_RETRIES = 2;
 
+/** Enough for a <head>, a nav and the footer where the contact address usually lives. */
+const DEFAULT_MAX_BYTES = 512 * 1024;
+
 export class HttpError extends Error {
   status: number;
   url: string;
@@ -26,13 +29,18 @@ export class HttpError extends Error {
   }
 }
 
-export type GetJsonOptions = {
+export type GetOptions = {
   timeoutMs?: number;
   /** Retries on 429/5xx/network errors only. 4xx is never retried. */
   retries?: number;
   /** The stage's deadline. Combined with `timeoutMs`, whichever fires first. */
   signal?: AbortSignal;
+  /** HTML only: how much of the body to keep. Company home pages have no size contract. */
+  maxBytes?: number;
 };
+
+/** Kept as the old name so existing callers read unchanged. */
+export type GetJsonOptions = GetOptions;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -100,13 +108,22 @@ function retryAfterMs(res: Response): number | null {
 }
 
 /**
- * GET and parse JSON.
+ * The retry loop every GET here shares.
  *
- * Returns `null` for 404 — for a job board that means "this slug is not (or is no
- * longer) a real board", which callers handle as data, not failure. Any other non-2xx
- * throws {@link HttpError} after retries are exhausted.
+ * `read` runs **inside** the loop on purpose: a body that arrives truncated or malformed is
+ * a transient failure like any other, and gets the same retry a socket drop would.
+ *
+ * Returns `null` for 404 — for a job board that means "this slug is not (or is no longer) a
+ * real board", and for a candidate company domain it means the page is simply not there.
+ * Both are data, not failure. Any other non-2xx throws {@link HttpError} once retries are
+ * exhausted.
  */
-export async function getJson<T>(url: string, opts: GetJsonOptions = {}): Promise<T | null> {
+async function get<T>(
+  url: string,
+  accept: string,
+  read: (res: Response) => Promise<T>,
+  opts: GetOptions,
+): Promise<T | null> {
   const { timeoutMs = DEFAULT_TIMEOUT_MS, retries = DEFAULT_RETRIES } = opts;
   const host = URL.parse(url)?.host ?? '';
   let lastError: unknown;
@@ -122,7 +139,7 @@ export async function getJson<T>(url: string, opts: GetJsonOptions = {}): Promis
     try {
       const timeout = AbortSignal.timeout(timeoutMs);
       const res = await fetch(url, {
-        headers: { accept: 'application/json', 'user-agent': USER_AGENT },
+        headers: { accept, 'user-agent': USER_AGENT },
         signal: opts.signal === undefined ? timeout : AbortSignal.any([timeout, opts.signal]),
         redirect: 'follow',
       });
@@ -138,7 +155,7 @@ export async function getJson<T>(url: string, opts: GetJsonOptions = {}): Promis
         continue;
       }
 
-      return (await res.json()) as T;
+      return await read(res);
     } catch (err) {
       // A non-retryable HttpError is final; network errors and timeouts are not.
       if (err instanceof HttpError) throw err;
@@ -151,6 +168,46 @@ export async function getJson<T>(url: string, opts: GetJsonOptions = {}): Promis
   throw lastError instanceof Error
     ? lastError
     : new Error(`request failed: ${url} (${String(lastError)})`);
+}
+
+/** GET and parse JSON. */
+export async function getJson<T>(url: string, opts: GetOptions = {}): Promise<T | null> {
+  return get<T>(url, 'application/json', async (res) => (await res.json()) as T, opts);
+}
+
+/**
+ * A page fetched from a company website, and the URL it actually came from.
+ *
+ * The final URL is the interesting half. Probing `berryworks.com` and landing on
+ * `berryworks.io` says the domain we guessed is an alias for the real one — and the real one
+ * is the one to store, because `companies.domain` has to be stable.
+ */
+export type Page = { url: string; html: string };
+
+/**
+ * GET an HTML page.
+ *
+ * Two differences from {@link getJson}, both because this fetches pages nobody promised us:
+ * the body is capped, since a company site can serve megabytes of inlined nonsense and only
+ * the first part is ever read; and a non-HTML response comes back as `null` rather than
+ * throwing, because a PDF or an image at `/careers` is an answer, just not a useful one.
+ */
+export async function getText(url: string, opts: GetOptions = {}): Promise<Page | null> {
+  const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES;
+
+  return get<Page | null>(
+    url,
+    'text/html,application/xhtml+xml',
+    async (res) => {
+      const type = res.headers.get('content-type') ?? '';
+      if (type !== '' && !/text\/html|xhtml|text\/plain/i.test(type)) return null;
+
+      const buffer = await res.arrayBuffer();
+      const html = new TextDecoder('utf-8').decode(buffer.slice(0, maxBytes));
+      return { url: res.url === '' ? url : res.url, html };
+    },
+    opts,
+  ).then((page) => page ?? null);
 }
 
 /**

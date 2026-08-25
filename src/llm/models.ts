@@ -9,8 +9,8 @@
  */
 import { z } from 'zod';
 
-/** The three things this project asks an LLM to do. */
-export const LlmJob = z.enum(['score', 'draft', 'profile']);
+/** The things this project asks an LLM to do. */
+export const LlmJob = z.enum(['score', 'draft', 'profile', 'domain']);
 export type LlmJob = z.infer<typeof LlmJob>;
 
 export type ModelChoice = {
@@ -55,6 +55,19 @@ export const MODELS: Record<LlmJob, ModelChoice> = {
     why: 'quality-sensitive; this is the actual product',
     jsonSchema: true,
     tpm: ASSUMED_TPM,
+  },
+  // A last resort in the contact stage, for company names no URL heuristic resolves —
+  // "AI4SEES Private Ltd", "Berryworks Kochi Adoor". Same model as scoring, deliberately: it
+  // is recall of a fact rather than judgement, the answer is a dozen tokens, and sharing the
+  // model means it also shares scoring's token window in `rate-limit.ts` rather than
+  // competing with it from a second budget that does not exist. Whatever it says is verified
+  // against DNS and the live site before it is believed, so a confident wrong answer is
+  // caught rather than stored.
+  domain: {
+    id: 'openai/gpt-oss-20b',
+    why: 'cheap factual recall; every answer is independently verified before use',
+    jsonSchema: true,
+    tpm: 8_000,
   },
   // Runs once, ever. Take the best model available; cost is irrelevant at one call.
   profile: {

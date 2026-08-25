@@ -1081,3 +1081,87 @@ you actually plumbed, and each fix moved the bottleneck to the next unplumbed on
 lesson is cheap to state and was expensive to learn: **when adding a deadline, enumerate every
 I/O call underneath it, then check them off.** There is no fifth path today — but the next new
 network call is one, and it will not announce itself.
+
+---
+
+## 030 — A guessed domain is fine; a believed one is not. The two gates
+
+**Decision.** The contact stage starts by turning a company *name* into a real domain, and
+nothing is stored unless it clears both of:
+
+1. the domain publishes MX records (`src/contacts/verify.ts`), and
+2. the live page, fetched and stripped to text, contains the **whole** normalised company
+   name (`pageNamesCompany` in `src/contacts/domain.ts`).
+
+Candidates come from URL heuristics first — the name stripped of legal suffixes, crossed with
+`.com .in .ai .io .co .co.in .app .tech`, plus a hyphenated form and the first word alone,
+capped at 12 — and only names that survive all of them go to Groq. Whatever Groq answers is
+put through the identical two gates.
+
+**Why this comes before the cascade at all.** `phases.md` lists `cascade.ts` as Phase 2's
+first task, and it cannot be: **73 of the 78 matched jobs belong to a company whose domain is
+an `.unknown.invalid` marker** (decision 016), all from alert mail, whose posting URLs are
+`linkedin.com` and `naukri.com` and carry no company domain anywhere. Every rung of the
+cascade keys off a domain, so without this the stage would run and find nothing for 94% of
+the queue.
+
+**What the two gates actually caught.** Measured over the 69 real unknown companies in the DB:
+
+| | |
+|---|---|
+| Resolved | **59 of 69 (86%)**, 58 by page proof |
+| Rejected by MX | `berryworks.com` (an atom.com sale listing), `stancehealth.com` (HugeDomains) |
+| Rejected by name | `chai.com` for Chai Point, `stance.com` for Stance Health, `erm.com` for Sustainability Economics |
+
+Both parked domains resolve and serve real HTML. Without the MX gate they would have been
+adopted, pattern-guessed to `careers@berryworks.com`, drafted, and — in Phase 3 — sent. The
+bounce is the damage: Gmail scores the account on bounce rate, and this project has one
+personal address, no sending domain and no warm-up to spend (decision 011's $0 budget).
+
+**The first-word stem was accepted at first, and was wrong every time it decided anything.**
+Chai Point → `chai.com`, Stance Health → `stance.com`, Sustainability Economics → a
+consultancy called ERM. All three were pages containing an ordinary English word. The rule is
+now the whole name, which works only because `normaliseCompanyName` already strips the "Pvt
+Ltd"/"Technologies" noise the alert mail adds — "Discover Dollar Technologies Pvt Ltd" merely
+has to find `discoverdollar`, which is what the site says.
+
+**Redirects are resolved to the apex, and that is load-bearing.** `chaipoint.com` redirects to
+`shop.chaipoint.com`; an earlier version stored the landing host, asked whether *that* had MX
+— subdomains almost never do — and discarded the right answer, falling through to `chai.com`.
+`apexOf()` also decides the never-a-company blocklist, because a dead company site commonly
+redirects to LinkedIn, and recording `linkedin.com` as a company's domain would be a
+first-class catastrophe.
+
+**One weaker proof exists, and it is narrow on purpose.** `coindcx.com` accepts mail and 403s
+every request behind a bot filter, so the page test can never pass — and 024 named CoinDCX
+specifically as a posting this pipeline should be reaching. So a domain that (a) refused to be
+read with an HTTP status, (b) has MX, and (c) spells the company name **exactly** is accepted
+as `proof: 'exact-domain'`. It is held back rather than returned: taking it immediately
+resolved FRND to `frnd.io`, three candidates ahead of `frnd.app`, which is the company and
+says so on its home page. A weaker proof must lose to a stronger one found later, so the
+candidate loop always runs to the end.
+
+The blast radius of being wrong is bounded by construction: with no readable page there is
+nothing to scrape, so such a company can only ever produce a pattern-guessed address, which is
+`confidence: 'low'`, cannot auto-send (invariant 3), and is read by a human first.
+
+**The model fallback barely earns its place, and is kept anyway.** Over the 12 names the
+heuristics missed it rescued **one**, CoinDCX, which the weak path had already found. It
+correctly refused to answer for ten. That is the right behaviour and it costs ~10 small calls
+a run, so it stays — but do not expect more from it, and do not put it first: heuristics are
+free and instant, and Groq's 8,000 tokens/minute are already scoring's bottleneck (017).
+
+**It is the one Groq call in this project with no Zod schema.** With
+`response_format: json_schema`, Groq returned `400 Failed to validate JSON` for 10 of those 12
+names — precisely the ones where the honest answer is "I don't know". Strict mode rejects the
+model's way of expressing an empty answer, so the schema was converting *correct refusals*
+into errors. A bare domain needs no schema; a regex parses and validates it in one step.
+
+**Unresolved is a real outcome, not a failure.** Ten companies stay on their markers. Those
+jobs go to `NEEDS_CONTACT` and retry every 3 days, 3 times, then `EXPIRED` — the path the
+state machine already specified. No email is ever drafted against an unverified domain.
+
+**Revisit when.** The miss list is dominated by companies whose site is a JS shell or whose
+name is a division ("Sony Research India"). If that list grows, the next lever is reading the
+`<title>` of a `/about` page rather than loosening the name rule — loosening it is what
+produced `chai.com`.
