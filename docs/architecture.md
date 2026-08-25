@@ -116,7 +116,7 @@ on four identical prompts — and `REJECTED` is terminal. Decision 012 has the m
 | 3 | Score | `jobs` @ DISCOVERED (prefilter is not built — see `phases.md`) | `job_scores`, state | daily |
 | 4 | Contacts | `jobs` @ MATCHED, and NEEDS_CONTACT rows whose 3-day retry is due | `contacts`, **`companies.domain`**, state | daily |
 | 5 | Draft | job + score + contact | `outreach` @ DRAFTED, Gmail draft | daily |
-| 6 | Digest | `jobs` @ MATCHED with `digested_at IS NULL` | Telegram, `jobs.digested_at` | daily |
+| 6 | Digest | undigested jobs in any non-rejected state, plus `outreach` with `digested_at IS NULL` | Telegram, `jobs.digested_at`, `outreach.digested_at` | daily |
 | 7 | Gate + Send | `outreach` @ DRAFTED / approved | Gmail, state → SENT | daily + on-approval |
 | 8 | Track | `outreach` @ SENT | replies, bounces, follow-ups | **every 4h** |
 
@@ -161,8 +161,8 @@ The pipeline must be safe to run twice in a row.
 |---|---|
 | Ingest | Upsert on `dedup_key`; bump `last_seen_at` |
 | Score | Only picks up DISCOVERED rows; a `(job_id, prompt_version)` row already there is reused rather than re-requested. `--rescore` is the out-of-band path for a rubric bump: writes scores, never states |
-| Contacts | Skip if the company already has a contact |
-| Digest | Skip if `jobs.digested_at` is set; it is set only after Telegram accepts the message |
+| Contacts | Skip if the company already has a contact. A company whose domain will not verify records an attempt and is retried in 3 days, 3 times |
+| Digest | Skip if `jobs.digested_at` is set — and independently, skip a draft if `outreach.digested_at` is set. Both are written only after Telegram accepts the message |
 | Draft | Skip if an `outreach` row exists for `job_id` |
 | Send | See below |
 
