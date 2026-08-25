@@ -34,6 +34,7 @@ digest, and the cause sitting in `runs.errors` where nobody looked:
 | score was secretly the constant 82 | 2 weeks | 023 rubric v4 |
 | gate trusted one host; budget starved the best source | 3 days | 025 |
 | the Gmail path never received the deadline | 1 day | 028 |
+| the Groq path never received it either (2.9h on 3 jobs) | 1 day | 029 |
 
 **Three of those were caused by the fix before them.** 025 and 028 both record the same lesson
 at different levels: bounding a thing only bounds the paths you actually bounded, and a limit
@@ -46,16 +47,22 @@ morning's log is the first time the pipeline announced its own breakage on the d
 
 ### The state of the last run
 
-The 08-24 06:13 run **failed**, and its cause is fixed but unverified: ingest hung in the Gmail
-source because that path never got the abort signal (028). The fix is committed; **the 08-25
-06:00 run is the first test of it.** Check that ingest logs a `gmail-alert: N kept` line at
-all — that line missing entirely is the signature of this bug.
+08-25 06:10 ran for **four hours** and both fixes in it were half-right, which is the useful
+part:
+
+- **028 worked.** `gmail-alert: 59 kept in 933s` — the Gmail source honoured its deadline and
+  logged a line, where the morning before it hung and logged nothing at all.
+- **But scoring took 2.9 hours on three jobs**, because Groq was the last path with no
+  deadline. Fixed the same day (029). **Unverified — the 08-26 06:00 run is its first test.**
+
+Every network call in the project now honours a deadline. That specific class of bug should be
+closed; if a run overruns again, the first question is which new I/O path was added.
 
 ## In flight
 
 Nothing. Clean tree, no partial work.
 
-## Read decisions 012–028 before touching the scorer, the digest, the parsers or the schedule
+## Read decisions 012–029 before touching the scorer, the digest, the parsers or the schedule
 
 Things a fresh session would otherwise undo, all measured rather than assumed:
 
@@ -121,44 +128,38 @@ Full reasoning in `docs/decisions.md` 010.
 
 ## Blocked on Utkarsh
 
-**The Gmail token is expired and job ingest is off.** Since ~2026-08-19:
+**Nothing blocking.** Gmail was re-authorised on 2026-08-25 **after** the OAuth consent screen
+was set to *In production*, and the old Testing-era grant was revoked at
+`myaccount.google.com/permissions` first — publishing does not retroactively fix a token
+already issued, which is why the revoke mattered.
 
-```
-[ingest] source gmail-alert failed: invalid_grant
-```
-
-This is the 7-day Testing-mode expiry, exactly as predicted on 08-12 — so **publishing the
-consent screen did not take**. `gmail.readonly` is a *restricted* scope, so Google may simply
-be holding the app unverified. It matters more than it used to: alert email is **67 of 76
-postings**, against 9 from all 51 ATS boards combined.
-
-Fix now: `node src/gmail/auth.ts` (opens a browser, ~20 seconds; click through the
-"Google hasn't verified this app" screen via `Advanced`). Fix properly: set the OAuth consent
-screen's publishing status to **In production** — see 015a, which separates *publishing* (stops
-the 7-day expiry) from *verification* (only removes the warning screen, and is not worth
-pursuing for a one-user app). The real escape hatch remains a Workspace account on an own
-domain, already on the later-phases list for deliverability anyway.
-
-Worth building either way: nothing told anybody. A dead credential shows up as
-`source_failed: 1` in `runs.stats` and a log line, and the digest is silent by design (014).
-That is the recurring shape of every failure in the table above.
+**The one thing to watch:** that fix is only provable by the calendar. The old 7-day clock
+would have expired the token around **2026-08-30**. If 1 September passes with no
+`invalid_grant` in `logs/daily.log`, it is genuinely fixed. If it dies again, publishing did
+not take for this grant and the answer is a Google Workspace account on an own domain, where
+the app is *internal* and none of this applies — already on the later-phases list for email
+deliverability anyway. See 015a for why *verification* is a different thing and not worth
+pursuing.
 
 *(Target geography is settled — decision 009.)*
 
 ## Next action
 
-**1. Check the 08-25 06:00 run.** First test of 028.
+**1. Check the 08-26 06:00 run.** First test of 029, and the first run where every network
+path has a deadline.
 
 ```
 node src/schedule/launchd.ts --status     # 0 ran · 75 skipped, no network · anything else, read on
 tail -60 logs/daily.log
 ```
 
-Ingest must log a line per source. `gmail-alert: N kept` missing entirely means 028 did not
-take. A Telegram message about failures means 026 is working — that is the system behaving,
-not a new problem.
+Two things to look for: ingest logs a line per source (`gmail-alert: N kept` missing entirely
+is 028 regressing), and the whole run finishes in minutes rather than hours (029). A Telegram
+message about failures means 026 is working — that is the system behaving, not a new problem.
 
-**2. Two open questions that need Utkarsh, not code.** Both are recorded in full in 027 and
+**2. The Gmail token expiry is unproven until 1 September** — see *Blocked on Utkarsh*.
+
+**3. Two open questions that need Utkarsh, not code.** Both are recorded in full in 027 and
 024; neither should be guessed at:
 
 - **The digest backlog.** 46 matches are queued against `MAX_ITEMS_PER_DIGEST = 10`, so about
@@ -171,7 +172,7 @@ not a new problem.
   the main job source with it. Last re-authorised 2026-08-23, so **expect it to die around
   08-30**. 015a explains why *publishing* fixes this and *verification* is not worth pursuing.
 
-**3. Then the real work, and it is a genuine fork.**
+**4. Then the real work, and it is a genuine fork.**
 
 - **The company signal in the rubric (v5).** 57 of 90 jobs score exactly 84 because a title
   like "Software Engineering Intern" tells the model everything and nothing. The employer is
@@ -189,9 +190,9 @@ not a new problem.
 Sharpening the rubric makes what exists better; Phase 2 adds what the project is actually for.
 **Utkarsh has not chosen between them** — the last session offered both and he did not answer.
 
-**4. Known and deliberately unfixed.** `src/llm/groq.ts` has its own `fetch` and never receives
-`ctx.signal`, so the score stage's 75-minute budget cannot stop a hung Groq call (028). It has
-not bitten yet because the network gate now checks `api.groq.com` before the run starts.
+**5. Nothing is knowingly unfixed.** As of 029 every network call honours a deadline. The four
+entries 022 → 025 → 028 → 029 are all the same bug found one path at a time; if a run overruns
+again, the question to ask is which I/O path was added since.
 
 Deliberately deferred:
 - `src/match/embed.ts` — bge-small prefilter. At 5 jobs/day scoring everything is cheaper

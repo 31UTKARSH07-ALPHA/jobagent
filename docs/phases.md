@@ -3,9 +3,10 @@
 > **Status: Phase 1 works and is scheduled; Phase 2 not started.** 90 jobs scored under rubric
 > v4, 74 matched, 78 companies, 186 tests. The three weeks since Phase 1's code was "done" went
 > almost entirely on making failures *visible* rather than silent — decisions 019 and 022–028,
-> of which three fixed problems caused by the fix before them. As of 2026-08-24 the pipeline
+> of which four fixed problems caused by the fix before them. As of 2026-08-24 the pipeline
 > reports its own breakage the same morning (026), which is what makes the rest trustworthy.
-> **Next is a genuine fork, and Utkarsh has not chosen:** sharpen the rubric with a company
+> Every network call now honours a deadline (029). **Next is a genuine fork, and Utkarsh has
+> not chosen:** sharpen the rubric with a company
 > signal (024, fixes the 57-way tie at 84), or start Phase 2. See `agenthandoff.md`.
 > Update this header every time a phase completes. It is the first thing read each session.
 
