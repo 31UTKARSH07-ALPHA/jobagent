@@ -1165,3 +1165,61 @@ state machine already specified. No email is ever drafted against an unverified 
 name is a division ("Sony Research India"). If that list grows, the next lever is reading the
 `<title>` of a `/about` page rather than loosening the name rule — loosening it is what
 produced `chai.com`.
+
+---
+
+## 031 — The contact cascade, and the two addresses it should never return
+
+**Decision.** `src/contacts/` is now a real stage: resolve the domain (030), run four rungs
+best-first, MX-check the winner, store one contact per **company** (decision 005), and advance
+every waiting job at that company to `DRAFTED` — or to `NEEDS_CONTACT`, retried every 3 days,
+3 times, then `EXPIRED`.
+
+The rungs, and the confidence each earns, are the ladder invariant 3 rests on:
+
+| Rung | Confidence | Auto-send eligible |
+|---|---|---|
+| `posting` — an address in the job description | high | yes |
+| `team_page` — an address published on the company's own site | high | yes |
+| `github` — the company's GitHub org public email | medium | no |
+| `pattern` — `careers@` and friends, guessed | low | no |
+
+**First real run, 2026-08-25:** 5m45s, 0 errors, 78 companies. 67 jobs to `DRAFTED`, 11 to
+`NEEDS_CONTACT` — exactly the 10 companies whose domain would not verify. 27 addresses came
+from a real page, 1 from GitHub, 34 are guesses. Every stored contact has MX.
+
+**Two addresses got through that should not have, and both were high confidence.** That is
+the part worth remembering, because `high` is the tier Phase 3 may auto-send without a human
+ever reading it:
+
+- **The wrong desk.** `customercare@chaipoint.com` and `support@bytebeam.io` were returned as
+  `team_page` finds. A cold job application arriving in a customer-service queue is how a
+  small company decides a sender is spam. Every customer-facing desk now joins `sales@` and
+  `billing@` on the junk list, and those companies fall through to a `careers@` guess — which
+  is `low`, so a human reads it first. Losing a real address to gain an approval step is the
+  right trade at this tier.
+- **Another company's mailbox.** The aggregator "Top Gen AI Jobs" publishes
+  `jobs.accommodations@sandisk.com` on its site, and the rule "off-domain is fine if the local
+  part is about hiring" stored SanDisk's *disability-accommodations* inbox as a high-confidence
+  contact for a different company. **A page can name any address it likes; that does not make
+  it the page owner's.** Off-domain addresses are now kept only from mailbox providers
+  (`gmail.com` and friends — which is genuinely how a ten-person firm in Kochi operates), or
+  when the local part carries this company's own name. `accommodations@` and `accessibility@`
+  are junk outright.
+
+The generalisation, and it is the same shape as 025 and 028: **a filter written for the common
+case will be applied to the adversarial one.** Both bugs were rules that were correct about
+the address and wrong about whose it was.
+
+**Why `mx_valid` is always 1.** An address whose domain fails the check is never stored — the
+cascade walks down its ranked list until one answers. The column records that the check
+happened, not its outcome.
+
+**Why the MX check is a parameter.** `bestContact` takes its checker as an argument. A stage
+test that stubbed the cascade but not this sat there resolving `acme.com` against the real
+internet, which is a slow test today and a flaky one on a plane.
+
+**One-off DB repair, 2026-08-25.** Job 30 was reset `DRAFTED → MATCHED` by hand to re-run it
+after the SanDisk fix, and the bad contact row deleted. Safe only because no `outreach` row
+existed. The state machine has no such edge on purpose — this is the same category of
+intervention as the 2026-08-10 reset, and no stage may ever do it.

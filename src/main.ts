@@ -19,6 +19,7 @@ import { nowIso, StageName, type RunError } from './store/schema.ts';
 import type { Stage, StageContext } from './stage.ts';
 import { runIngest } from './ingest/index.ts';
 import { runScore } from './match/score.ts';
+import { runContacts } from './contacts/index.ts';
 import { runDigest } from './notify/digest.ts';
 import { reportFaults } from './notify/health.ts';
 
@@ -68,6 +69,10 @@ export const STAGE_BUDGET_MS: Record<string, number> = {
   // was killing its own retries: measured 08-21 to 08-23, three digests died mid-ladder with
   // `send_retry: 2` (decision 025).
   digest: 8 * 60_000,
+  // Up to twelve DNS probes and four page fetches per company, against dozens of companies
+  // that have never been looked up before — 0.5 to 11 seconds each, measured live. The
+  // per-company budget inside the stage is what stops one dead host from taking all of it.
+  contacts: 15 * 60_000,
 };
 
 export const DEFAULT_STAGE_BUDGET_MS = 10 * 60_000;
@@ -76,7 +81,7 @@ export const STAGES: Record<string, Stage> = {
   ingest: { phase: 1, run: runIngest },
   prefilter: notYet(1, 'bge-small embeddings + cosine top ~30'),
   score: { phase: 1, run: runScore },
-  contacts: notYet(2, 'contact cascade + MX check'),
+  contacts: { phase: 2, run: runContacts },
   draft: notYet(2, 'Groq drafting into Gmail drafts'),
   digest: { phase: 1, run: runDigest },
   send: notYet(3, 'gate, daily cap, jittered 09:00 queue'),

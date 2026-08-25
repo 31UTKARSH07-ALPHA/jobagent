@@ -65,12 +65,29 @@ test('a subdomain of the company still counts as the company', () => {
   assert.equal(isUsable('careers@mail.acme.com', 'acme.com', 'Acme'), true);
 });
 
-test('an off-domain address is kept only when it is about hiring or names the company', () => {
+test('a mailbox-provider address is kept when it is plausibly the company', () => {
   // Small Indian firms really do publish a gmail address, and refusing it would leave only
   // a guess at the company domain.
   assert.equal(isUsable('acmehr@gmail.com', 'acme.com', 'Acme'), true, 'carries the company name');
   assert.equal(isUsable('hr@gmail.com', 'acme.com', 'Acme'), true, 'role address');
   assert.equal(isUsable('rahul.sharma@gmail.com', 'acme.com', 'Acme'), false, 'someone unrelated');
+});
+
+test("another company's mailbox is never ours to write to", () => {
+  // Live run 2026-08-25: the aggregator "Top Gen AI Jobs" published
+  // jobs.accommodations@sandisk.com, which a hiring-local-part rule stored as a
+  // high-confidence contact for an unrelated company.
+  assert.equal(isUsable('jobs.accommodations@sandisk.com', 'topgenaijobs.com', 'Top Gen AI Jobs'), false);
+  assert.equal(isUsable('careers@othercorp.com', 'acme.com', 'Acme'), false);
+  // ...unless the address itself names the company, which is a real pattern for subsidiaries.
+  assert.equal(isUsable('acme.careers@parentco.com', 'acme.com', 'Acme'), true);
+});
+
+test('accommodation and accessibility mailboxes are never contacted', () => {
+  // A legally-mandated accessibility inbox is the wrong desk in a way that matters.
+  for (const local of ['accommodations', 'accommodation', 'accessibility']) {
+    assert.equal(isUsable(`${local}@acme.com`, 'acme.com', 'Acme'), false, local);
+  }
 });
 
 test('the rung outranks everything about the address', () => {

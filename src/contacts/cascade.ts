@@ -41,7 +41,7 @@ import { domainOfEmail, hasMx } from './verify.ts';
  * therefore goes to the approval queue where it belongs.
  */
 const JUNK_LOCAL =
-  /^(no-?reply|donot-?reply|do-not-reply|postmaster|webmaster|hostmaster|abuse|privacy|legal|dmca|copyright|unsubscribe|mailer-daemon|bounce|notifications?|alerts?|security|sales|billing|invoices?|accounts?payable|press|media|newsletter|subscribe|orders?|returns?|refunds?|support|customer-?(care|support|service)|helpdesk|help|care|services?|feedback|complaints?|grievances?)([._+-]|$)/i;
+  /^(no-?reply|donot-?reply|do-not-reply|postmaster|webmaster|hostmaster|abuse|privacy|legal|dmca|copyright|unsubscribe|mailer-daemon|bounce|notifications?|alerts?|security|sales|billing|invoices?|accounts?payable|press|media|newsletter|subscribe|orders?|returns?|refunds?|support|customer-?(care|support|service)|helpdesk|help|care|services?|feedback|complaints?|grievances?|accommodations?|accessibility)([._+-]|$)/i;
 
 /** Addresses that belong to the *website*, not the company behind it. */
 const JUNK_DOMAINS = new Set([
@@ -60,6 +60,31 @@ const JUNK_DOMAINS = new Set([
   'shopify.com',
   'wordpress.com',
   'users.noreply.github.com',
+]);
+
+/**
+ * Mailbox providers, as opposed to companies.
+ *
+ * An address here is somebody's personal or small-business mailbox, which is normal for a
+ * ten-person firm in Kochi. An address at any *other* corporate domain is a different
+ * company's mailbox and is not ours to write to — see {@link isUsable}.
+ */
+const FREE_MAIL = new Set([
+  'gmail.com',
+  'googlemail.com',
+  'outlook.com',
+  'hotmail.com',
+  'live.com',
+  'yahoo.com',
+  'yahoo.in',
+  'yahoo.co.in',
+  'rediffmail.com',
+  'icloud.com',
+  'aol.com',
+  'proton.me',
+  'protonmail.com',
+  'zoho.com',
+  'zohomail.in',
 ]);
 
 /** `logo@2x.png` parses as an email address. It is not one. */
@@ -136,11 +161,18 @@ export function emailsIn(input: string): string[] {
 /**
  * Is this an address, and is it one we would write to?
  *
- * Off-domain addresses are allowed through deliberately. A ten-person firm in Kochi
- * genuinely does put `acmehr@gmail.com` on its contact page, and refusing those would throw
- * away the real address in favour of a guess at the company domain — but only when the local
- * part is about hiring or carries the company's own name, since an arbitrary personal address
- * on a company page is as likely to be a vendor's as an employee's.
+ * On the company's own domain, the junk filters above are the whole test. Off it, the
+ * question is *whose* mailbox this is, and the answer depends on the domain:
+ *
+ * - **A mailbox provider** — `acmehr@gmail.com`. Kept when it is a hiring address or carries
+ *   the company's name, because a ten-person firm in Kochi genuinely publishes one of these
+ *   and refusing it would throw away the real address in favour of a guess.
+ * - **Another company's domain** — kept only if the local part carries this company's name.
+ *   Live run, 2026-08-25: the aggregator "Top Gen AI Jobs" published
+ *   `jobs.accommodations@sandisk.com` on its site, and a rule that accepted any hiring-ish
+ *   local part stored SanDisk's disability-accommodations mailbox as a **high**-confidence
+ *   contact for a different company. A page can name any address it likes; that does not make
+ *   it the page owner's.
  */
 export function isUsable(email: string, companyDomain: string, companyName: string): boolean {
   const local = email.split('@')[0] ?? '';
@@ -154,7 +186,9 @@ export function isUsable(email: string, companyDomain: string, companyName: stri
   if (domain === own || apexOf(domain) === apexOf(own)) return true;
 
   const stem = normaliseCompanyName(companyName).replace(/\s+/g, '');
-  return HIRING_LOCAL.test(local) || (stem.length >= 4 && local.replace(/[^a-z0-9]/gi, '').includes(stem));
+  const namesTheCompany = stem.length >= 4 && local.replace(/[^a-z0-9]/gi, '').includes(stem);
+
+  return namesTheCompany || (FREE_MAIL.has(apexOf(domain)) && HIRING_LOCAL.test(local));
 }
 
 /**
@@ -382,13 +416,19 @@ const sorted = (candidates: ContactCandidate[]): ContactCandidate[] =>
  * The MX check is here rather than inside the ranking because it costs a DNS round trip:
  * asking it of the top candidate and walking down only on failure means the common case is
  * one lookup, not seven.
+ *
+ * The check is a parameter so the stage can pass its own — a test that stubs the cascade but
+ * not this would sit there resolving `acme.com` against the real internet.
  */
 export async function bestContact(
   candidates: readonly ContactCandidate[],
+  mx: (email: string) => Promise<boolean> = (email) => {
+    const domain = domainOfEmail(email);
+    return domain === null ? Promise.resolve(false) : hasMx(domain);
+  },
 ): Promise<ContactCandidate | null> {
   for (const candidate of candidates) {
-    const domain = domainOfEmail(candidate.email);
-    if (domain !== null && (await hasMx(domain))) return candidate;
+    if (await mx(candidate.email)) return candidate;
   }
   return null;
 }

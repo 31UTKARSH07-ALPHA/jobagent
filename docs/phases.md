@@ -94,9 +94,13 @@ change either the prompt or the weights, so the old distribution survives for co
 
 ## Phase 2 — Contacts and drafts
 
-- [ ] `src/contacts/cascade.ts` — posting metadata → team page → GitHub → pattern
-- [ ] `src/contacts/verify.ts` — MX check via `dns/promises`
-- [ ] Confidence assignment (see `CLAUDE.md` invariant 3)
+- [x] `src/contacts/domain.ts` — company **name** → a verified domain. Not in the original
+      plan and unavoidable: 73 of the 78 matched jobs were on `.unknown.invalid` markers, and
+      every rung below keys off a domain (decision 030)
+- [x] `src/contacts/cascade.ts` — posting metadata → team page → GitHub → pattern
+- [x] `src/contacts/verify.ts` — MX check via `dns/promises`
+- [x] Confidence assignment (see `CLAUDE.md` invariant 3)
+- [x] `src/contacts/index.ts` — the stage: per company, per-company budget, 3-day retry
 - [ ] `src/draft/compose.ts` — drafting, uses `job_scores.hook`
 - [ ] Write drafts into Gmail; nothing sends yet
 - [ ] Digest shows drafts inline for review
