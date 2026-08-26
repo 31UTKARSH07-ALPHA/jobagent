@@ -1280,3 +1280,54 @@ Telegram accepts the message, the same idiom and for the same reason.
 **A draft shown inline under its own match is not repeated in the drafts section**, and the
 `(guessed)` label appears on every low-confidence address, every time. That label is the only
 thing standing between a pattern guess and the assumption that an address was verified.
+
+---
+
+## 033 — Every email opens with a greeting, and never with a name we guessed
+
+**Decision.** A draft must open with `Hi <first name>,` when the **posting itself** named a
+person, and `Hi <Company> team,` otherwise. No `Dear Sir/Madam`, no `Dear Hiring Manager`, and
+no name inferred from anything but the posting. Checked in `problemsWith()`, not just asked
+for in the prompt.
+
+**Why it came up.** Utkarsh read the first eight drafts and asked whether opening with no
+greeting was acceptable. It was not, and the measurement made the answer sharper than the
+question: **seven of eight opened mid-sentence and one said "Hi Stripe Team,"**. The
+inconsistency was the real finding — the format had never actually been specified, so the
+model was choosing per call.
+
+The cause was an ambiguous instruction of ours, not a misbehaving model. The old rule said
+*"open with the hook you are given, not with 'I am writing to express my interest'"*, which
+reads perfectly well as "the hook is line one".
+
+**Why a greeting rather than none.** No greeting is the most recognisable signature of a mass
+mailing, which is the impression this entire project is arranged to avoid — sends are jittered
+(007), volume is capped and ramped, and every email is personalised per company. Three words
+buy consistency with all of that. But *formal* is the wrong correction: `Dear Sir/Madam` is
+itself the opening of bulk mail, so it is rejected explicitly rather than left to taste.
+
+**Never invent a name.** Utkarsh's instruction, and it closed a real bug: the GitHub rung was
+storing the **company** name in `contacts.name`, a field that means *a person*, so the new
+greeting logic would have written "Hi Convin," as though Convin were somebody's first name. A
+personal greeting is now gated on `source = 'posting'` — the only rung where a name could have
+come from a human writing it down. Everything else gets the company greeting, which is a
+perfectly normal thing to receive.
+
+**`greetingName()`, and why it is not `normaliseCompanyName()`.** The first fixed pass wrote
+"Hi Discover Dollar Technologies Pvt Ltd team," and "Hi AI4SEES Private Ltd team,". The
+existing normaliser would have fixed that and also lowercased the name and stripped
+"Technologies" and "Labs", which are part of how companies refer to themselves. So a second,
+narrower function removes only legal-entity suffixes and keeps the original casing.
+
+**The hook is a résumé bullet and must not be pasted in as one.** `job_scores.hook` is written
+as "Built a distributed suggestion engine achieving p95 8 ms latency", and the drafter used it
+verbatim — so an email opened `Built a distributed…`, a sentence with no subject. It must be
+rewritten in the first person, and the checker rejects an opening sentence that begins with a
+bare past participle.
+
+**`--redraft`, the counterpart to `--rescore`.** A prompt improvement is worth nothing to the
+drafts already written, and `UNIQUE(job_id)` guarantees the stage will never revisit them.
+`node src/draft/index.ts --redraft` recomposes every unsent draft and rewrites it in Gmail
+with `drafts.update`, keeping the draft id — which is the handle that makes an ambiguous send
+answerable later (007), so delete-and-recreate is not an option. It never touches a sent email
+and never touches state.

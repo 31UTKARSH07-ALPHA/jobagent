@@ -183,7 +183,13 @@ pursuing.
 
 ## Next action
 
-**1. Read the eight drafts.** They are in his Gmail Drafts folder right now, and this is the
+**0. He read the eight drafts on 2026-08-27 and they are approved in substance** — "now its
+looking good emails to reach out". One thing came back: they had no greeting. Seven of eight
+opened mid-sentence, one said "Hi Stripe Team," — fixed in 033, along with his instruction
+never to greet by a name the posting did not give. All eight were rewritten in place with
+`--redraft`. **What has still never been tested is a reply**, because nothing has been sent.
+
+**1. Re-read the eight drafts if anything about them changes.** They are in his Gmail Drafts folder right now, and this is the
 only thing that decides whether Phase 2 worked. `phases.md` says it plainly: *done when you
 read ~5 drafts each morning and would genuinely send 3 of them.* Nothing in the code can
 answer that.

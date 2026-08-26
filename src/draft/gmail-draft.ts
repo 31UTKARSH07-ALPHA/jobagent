@@ -40,6 +40,13 @@ export type CreatedDraft = {
 /** The stage takes this as a parameter so tests never touch a real inbox. */
 export type DraftWriter = (draft: OutgoingDraft, signal?: AbortSignal) => Promise<CreatedDraft>;
 
+/** Rewrites an existing draft in place, keeping its id. See {@link updateGmailDraft}. */
+export type DraftUpdater = (
+  draftId: string,
+  draft: OutgoingDraft,
+  signal?: AbortSignal,
+) => Promise<void>;
+
 /**
  * A subject line has to be ASCII on the wire, and job titles are full of what is not:
  * `–`, `’`, `·`, and the em dash the model likes. RFC 2047 encoded-word, base64 flavour,
@@ -104,4 +111,32 @@ export async function createGmailDraft(
     messageId: created.data.message?.id ?? null,
     threadId: created.data.message?.threadId ?? null,
   };
+}
+
+/**
+ * Replace the contents of a draft that already exists, keeping its id.
+ *
+ * `drafts.update` rather than delete-then-create, because the id is stored in `outreach` and
+ * is what makes an ambiguous send answerable later (decision 007). Deleting and recreating
+ * would invalidate it and leave a window where the row points at nothing.
+ *
+ * Used by `--redraft` when the drafting prompt improves: the emails already written should
+ * benefit from the fix, not sit in the folder as the worst ones in the account.
+ */
+export async function updateGmailDraft(
+  draftId: string,
+  draft: OutgoingDraft,
+  signal?: AbortSignal,
+  client?: gmail_v1.Gmail,
+): Promise<void> {
+  const gmail = client ?? gmailClient();
+
+  await gmail.users.drafts.update(
+    {
+      userId: 'me',
+      id: draftId,
+      requestBody: { message: { raw: toRawMessage(draft) } },
+    },
+    { signal },
+  );
 }

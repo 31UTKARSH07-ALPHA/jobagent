@@ -37,6 +37,7 @@ node src/gmail/messages.ts --query="from:naukri.com" --links --full   # inspect 
 
 node src/contacts/domain.ts --name="Convin" [--llm]  # name → verified domain, prints candidates
 node src/draft/index.ts --job=12                     # compose one draft, print it, write nothing
+node src/draft/index.ts --redraft                    # rewrite every unsent Gmail draft in place
 
 ./scripts/run-daily.sh                 # exactly what launchd runs at 06:00
 node src/schedule/launchd.ts --status  # loaded? last exit code? how many runs?
@@ -84,6 +85,9 @@ node src/schedule/launchd.ts --install # (re)write and load the agent; --uninsta
 - **Two Groq calls deliberately skip structured output**: the domain lookup and the drafter.
   Strict `json_schema` mode 400s on an empty answer and on a long multi-line body — it is right
   for the scorer's four integers and wrong for text (decisions 030, 032).
+- **Never greet by a name the posting did not give.** `Hi <Company> team,` is the default and
+  is fine; an invented first name in line one of a cold email is not. The GitHub rung was
+  storing a *company* name in `contacts.name`, which is a person field (decision 033).
 - **Drafting sets `reasoning_effort: 'low'`.** The thinking is billed inside `max_tokens`, not
   beside it: at the default this model spent 774 of 900 tokens reasoning and returned a
   truncated email (032).

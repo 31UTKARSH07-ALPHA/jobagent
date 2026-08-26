@@ -19,7 +19,12 @@ import { latestScore } from '../store/scores.ts';
 import { nowIso, type Job, type JobScore, type Profile } from '../store/schema.ts';
 import { loadProfile } from '../match/profile.ts';
 import { groqDrafter, type Drafter, type DraftResult } from './compose.ts';
-import { createGmailDraft, type DraftWriter } from './gmail-draft.ts';
+import {
+  createGmailDraft,
+  updateGmailDraft,
+  type DraftUpdater,
+  type DraftWriter,
+} from './gmail-draft.ts';
 
 /**
  * Drafts written in one run.
@@ -31,7 +36,15 @@ import { createGmailDraft, type DraftWriter } from './gmail-draft.ts';
 export const MAX_DRAFTS_PER_RUN = 8;
 
 /** A job ready to be written about, with everything the composer needs. */
-type Draftable = { job: Job; company: string; contactId: number; email: string; score: JobScore };
+type Draftable = {
+  job: Job;
+  company: string;
+  contactId: number;
+  email: string;
+  /** The contact's name when the cascade found one — most are role addresses with none. */
+  contactName: string | null;
+  score: JobScore;
+};
 
 /**
  * Jobs in `DRAFTED` with a contact and no `outreach` row yet, best score first.
@@ -43,7 +56,11 @@ type Draftable = { job: Job; company: string; contactId: number; email: string; 
 export function draftableJobs(ctx: StageContext, limit = MAX_DRAFTS_PER_RUN): Draftable[] {
   const rows = ctx.db
     .prepare(
-      `SELECT j.id AS job_id, c.name AS company, k.id AS contact_id, k.email
+      // A name is only ever used to greet somebody when the *posting* named them. Every
+      // other rung yields a role mailbox, and inventing a first name for one is worse than
+      // the company greeting it would replace.
+      `SELECT j.id AS job_id, c.name AS company, k.id AS contact_id, k.email,
+              CASE WHEN k.source = 'posting' THEN k.name END AS contact_name
          FROM jobs j
          JOIN companies c ON c.id = j.company_id
          JOIN contacts k ON k.company_id = j.company_id
@@ -55,7 +72,13 @@ export function draftableJobs(ctx: StageContext, limit = MAX_DRAFTS_PER_RUN): Dr
                  j.first_seen_at DESC
         LIMIT ?`,
     )
-    .all(limit) as { job_id: number; company: string; contact_id: number; email: string }[];
+    .all(limit) as {
+    job_id: number;
+    company: string;
+    contact_id: number;
+    email: string;
+    contact_name: string | null;
+  }[];
 
   return rows.flatMap((row) => {
     const job = getJob(ctx.db, row.job_id);
@@ -63,7 +86,16 @@ export function draftableJobs(ctx: StageContext, limit = MAX_DRAFTS_PER_RUN): Dr
     // A job with no score cannot be written about — the hook comes from the score, and it is
     // the only part of an alert-sourced posting anything has ever read in full.
     if (job === null || score === null) return [];
-    return [{ job, company: row.company, contactId: row.contact_id, email: row.email, score }];
+    return [
+      {
+        job,
+        company: row.company,
+        contactId: row.contact_id,
+        email: row.email,
+        contactName: row.contact_name,
+        score,
+      },
+    ];
   });
 }
 
@@ -102,7 +134,14 @@ export async function runDraft(ctx: StageContext, deps: DraftDeps = {}): Promise
     }
 
     try {
-      const draft = await drafter.compose(item.job, item.company, item.score, profile, ctx.signal);
+      const draft = await drafter.compose(
+        item.job,
+        item.company,
+        item.score,
+        profile,
+        ctx.signal,
+        item.contactName,
+      );
 
       if (ctx.dryRun) {
         ctx.count('would_draft');
@@ -153,25 +192,104 @@ export async function runDraft(ctx: StageContext, deps: DraftDeps = {}): Promise
   }
 }
 
+/**
+ * Rewrite drafts that already exist, in place.
+ *
+ * The out-of-band path for a prompt change, and the exact counterpart of `score.ts
+ * --rescore` (decision 008's mechanism, applied to the other model call). Without it, an
+ * improvement to the drafting prompt leaves every email written before it sitting in the
+ * folder as the worst ones in the account — and `UNIQUE(job_id)` means the stage will never
+ * revisit them, because they already have a row.
+ *
+ * Never touches a sent email, and never touches state. `outreach.digested_at` is left alone:
+ * rewriting the text of a draft is not a reason to announce it again.
+ */
+export async function redraft(
+  dbPath: string,
+  opts: { limit?: number; deps?: DraftDeps & { updateDraft?: DraftUpdater } } = {},
+): Promise<number> {
+  const { openDb } = await import('../store/db.ts');
+  const db = openDb(dbPath);
+  const profile = opts.deps?.profile ?? loadProfile(opts.deps?.profilePath);
+  const drafter = opts.deps?.drafter ?? groqDrafter;
+  const update = opts.deps?.updateDraft ?? updateGmailDraft;
+
+  const rows = db
+    .prepare(
+      `SELECT o.id, o.job_id, o.gmail_draft_id, c.name AS company, k.email,
+              CASE WHEN k.source = 'posting' THEN k.name END AS contact_name
+         FROM outreach o
+         JOIN jobs j ON j.id = o.job_id
+         JOIN companies c ON c.id = j.company_id
+         JOIN contacts k ON k.id = o.contact_id
+        WHERE o.sent_at IS NULL
+          AND o.gmail_draft_id IS NOT NULL
+        ORDER BY o.id
+        ${opts.limit === undefined ? '' : 'LIMIT ?'}`,
+    )
+    .all(...(opts.limit === undefined ? [] : [opts.limit])) as {
+    id: number;
+    job_id: number;
+    gmail_draft_id: string;
+    company: string;
+    email: string;
+    contact_name: string | null;
+  }[];
+
+  console.log(`rewriting ${rows.length} unsent draft(s)\n`);
+  let rewritten = 0;
+
+  for (const row of rows) {
+    const job = getJob(db, row.job_id);
+    const score = latestScore(db, row.job_id);
+    if (job === null || score === null) continue;
+
+    try {
+      const draft = await drafter.compose(job, row.company, score, profile, undefined, row.contact_name);
+      await update(row.gmail_draft_id, { to: row.email, subject: draft.subject, body: draft.body });
+
+      db.prepare('UPDATE outreach SET subject = ?, body = ? WHERE id = ?').run(
+        draft.subject,
+        draft.body,
+        row.id,
+      );
+      rewritten++;
+      console.log(`✓ ${row.company} — ${draft.body.split('\n')[0]}`);
+    } catch (err) {
+      // The old draft stays exactly as it was, which is the safe failure: a worse email is
+      // better than a half-rewritten one.
+      console.error(`✗ ${row.company}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  db.close();
+  console.log(`\n${rewritten} of ${rows.length} rewritten`);
+  return rewritten === rows.length ? 0 : 1;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // CLI — read one draft before trusting the stage to write eight
 //
 //   node src/draft/index.ts --job=5          compose it, print it, write nothing
+//   node src/draft/index.ts --redraft        rewrite every unsent draft in place
 // ─────────────────────────────────────────────────────────────────────────────
 if (import.meta.main) {
   const { openDb, DEFAULT_DB_PATH } = await import('../store/db.ts');
   const { values } = parseArgs({
     options: {
       job: { type: 'string' },
+      redraft: { type: 'boolean', default: false },
       db: { type: 'string', default: DEFAULT_DB_PATH },
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
 
-  if (values.help || values.job === undefined) {
-    console.log('usage: node src/draft/index.ts --job=<id> [--db=<path>]');
+  if (values.help || (values.job === undefined && !values.redraft)) {
+    console.log('usage: node src/draft/index.ts (--job=<id> | --redraft) [--db=<path>]');
     process.exit(values.help ? 0 : 2);
   }
+
+  if (values.redraft) process.exit(await redraft(values.db));
 
   const db = openDb(values.db);
   const jobId = Number(values.job);

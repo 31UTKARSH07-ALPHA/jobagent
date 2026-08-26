@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseDraft, problemsWith, type DraftResult } from './compose.ts';
+import { greetingName, parseDraft, problemsWith, type DraftResult } from './compose.ts';
 import type { Profile } from '../store/schema.ts';
 
 const profile = {
@@ -117,9 +117,67 @@ test('a resume that does state the year is allowed to say so', () => {
   assert.deepEqual(problemsWith(draft({ body }), finalYear, 'Acme'), []);
 });
 
+test('an email with no greeting is caught', () => {
+  // Measured across the first eight real drafts: seven opened mid-sentence, one said
+  // "Hi Stripe Team,". The inconsistency was the tell that the format was never specified.
+  const abrupt = draft().body.replace('Hi Acme team,\n\n', '');
+  assert.ok(
+    problemsWith(draft({ body: abrupt }), profile, 'Acme').includes(
+      'opens with no greeting, which reads as a mass mailing',
+    ),
+  );
+});
+
+test('a form-letter greeting is worse than none and is caught too', () => {
+  for (const opening of ['Dear Sir/Madam', 'To Whom It May Concern', 'Dear Hiring Manager']) {
+    const body = draft().body.replace('Hi Acme team,', `${opening},`);
+    const problems = problemsWith(draft({ body }), profile, 'Acme');
+    assert.ok(problems.some((p) => /form-letter/.test(p)), opening);
+  }
+});
+
+test('the greetings a human would actually write all pass', () => {
+  // Greeting a named person is the better email, so the company has to be named in the text
+  // rather than only in "Hi Acme team," — which is what rule 4 asks for anyway.
+  const named = draft().body.replace(
+    'That work lines up with the read-heavy services your backend',
+    'That work lines up with the read-heavy services Acme describes in its backend',
+  );
+  for (const opening of ['Hi Priya,', 'Hello Acme team,', 'Hi Acme team,', 'Dear Priya,']) {
+    const body = named.replace('Hi Acme team,', opening);
+    assert.deepEqual(problemsWith(draft({ body }), profile, 'Acme'), [], opening);
+  }
+});
+
+test('a résumé fragment as the opening sentence is caught', () => {
+  // The scorer's hook is a CV bullet — "Built a distributed suggestion engine..." — and the
+  // model pasted it in with the subject still missing.
+  const fragment = draft().body.replace('I built a distributed', 'Built a distributed');
+  assert.ok(
+    problemsWith(draft({ body: fragment }), profile, 'Acme').some((p) => /résumé fragment/.test(p)),
+  );
+  // The same sentence with a subject is fine.
+  assert.deepEqual(problemsWith(draft(), profile, 'Acme'), []);
+});
+
+test('a legal suffix never reaches the greeting', () => {
+  // "Hi Discover Dollar Technologies Pvt Ltd team," is what the first pass wrote.
+  assert.equal(greetingName('Discover Dollar Technologies Pvt Ltd'), 'Discover Dollar Technologies');
+  assert.equal(greetingName('AI4SEES Private Ltd'), 'AI4SEES');
+  assert.equal(greetingName('Azuga, Inc.'), 'Azuga');
+  assert.equal(greetingName('RP INFOCARE PVT LTD'), 'RP INFOCARE');
+  assert.equal(greetingName('Arohana Tech Solutions Private Limited'), 'Arohana Tech Solutions');
+});
+
+test('a company that is only a legal suffix keeps its own name', () => {
+  // Stripping everything would greet an empty string.
+  assert.equal(greetingName('Limited'), 'Limited');
+  assert.equal(greetingName('Stripe'), 'Stripe');
+});
+
 test('length is bounded at both ends', () => {
-  assert.ok(problemsWith(draft({ body: 'Hi Acme. Utkarsh Pathak' }), profile, 'Acme').some((p) => /too short/.test(p)));
-  const rambling = `Hi Acme team, ${'words '.repeat(250)} Utkarsh Pathak`;
+  assert.ok(problemsWith(draft({ body: 'Hi Acme team,\n\nUtkarsh Pathak' }), profile, 'Acme').some((p) => /too short/.test(p)));
+  const rambling = `Hi Acme team,\n\n${'words '.repeat(250)} Utkarsh Pathak`;
   assert.ok(problemsWith(draft({ body: rambling }), profile, 'Acme').some((p) => /too long/.test(p)));
 });
 

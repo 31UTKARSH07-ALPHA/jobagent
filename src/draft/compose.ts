@@ -74,17 +74,23 @@ const SYSTEM = [
   '1. Every factual claim must come from the candidate profile you are given. Do not invent',
   '   employers, job titles, dates, degrees, metrics or technologies. If the profile lists no',
   '   work experience, the email must not imply any.',
-  '2. Open with the specific hook you are given, in the candidate\'s own words, not with',
-  '   "I am writing to express my interest".',
-  '3. Say why this company and this role, using something concrete from the posting.',
-  '4. 90 to 150 words in the body. Three short paragraphs at most.',
-  '5. End with one clear, low-friction ask — a short call, or whether they are taking',
+  '2. Begin with a greeting on its own line, followed by a blank line. Use "Hi <first name>,"',
+  '   when you are given a contact name, and "Hi <Company> team," when you are not. Never',
+  '   "Dear Sir/Madam", "To Whom It May Concern" or "Dear Hiring Manager" — those are the',
+  '   openings of bulk mail, which is what this is trying not to look like.',
+  '3. The first sentence *after* the greeting is the specific hook you are given, rewritten',
+  '   as a full sentence in the first person — "I built…", not "Built…". The hook is supplied',
+  '   as a résumé bullet and must not be pasted in as one. Not "I am writing to express my',
+  '   interest" either.',
+  '4. Say why this company and this role, using something concrete from the posting.',
+  '5. 90 to 150 words in the body. Three short paragraphs at most.',
+  '6. End with one clear, low-friction ask — a short call, or whether they are taking',
   '   applications for the role — then the candidate\'s name on its own line.',
-  '6. No placeholders of any kind. No square brackets. You have every fact you need; if you',
+  '7. No placeholders of any kind. No square brackets. You have every fact you need; if you',
   '   do not have something, leave it out rather than marking it to fill in later.',
-  '7. No flattery ("I am incredibly passionate"), no self-deprecation, no exclamation marks.',
+  '8. No flattery ("I am incredibly passionate"), no self-deprecation, no exclamation marks.',
   '',
-  '8. Do not state which year of study the candidate is in, when they graduate, or how many',
+  '9. Do not state which year of study the candidate is in, when they graduate, or how many',
   '   years of anything they have. Those are not in the profile and guessing them is a lie',
   '   in the first sentence a stranger reads.',
   '',
@@ -96,6 +102,23 @@ const SYSTEM = [
   '',
   '<the email body, greeting through sign-off>',
 ].join('\n');
+
+/**
+ * The company as you would greet it: `AI4SEES Private Ltd` → `AI4SEES`.
+ *
+ * Only the legal-entity suffixes are removed, and the original casing is kept — this is not
+ * `normaliseCompanyName`, which lowercases and also strips words like "Technologies" and
+ * "Labs" that are part of how a company actually refers to itself. "Hi Discover Dollar
+ * Technologies Pvt Ltd team," is what the first pass wrote, and nobody writes that.
+ */
+export function greetingName(company: string): string {
+  const trimmed = company
+    .replace(/[,.]?\s*\b(p(?:vt|rivate)\.?|ltd\.?|limited|llp|inc\.?|incorporated|corp\.?|corporation|plc|gmbh)\b\.?/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/[\s,.]+$/, '')
+    .trim();
+  return trimmed === '' ? company : trimmed;
+}
 
 /** The posting, as much of it as is worth spending tokens on. */
 function postingForPrompt(job: Job, company: string): string {
@@ -147,6 +170,28 @@ export function problemsWith(draft: DraftResult, profile: Profile, company: stri
   }
   if (/^(subject|re):/i.test(draft.body.trim())) problems.push('the body repeats the subject line');
 
+  // Measured across the first eight real drafts: seven opened mid-sentence and one said
+  // "Hi Stripe Team,". The inconsistency was the giveaway that the format was never actually
+  // specified — the old rule said "open with the hook", which the model read as "the hook is
+  // line one". An email with no greeting reads as a blast, which is the one impression this
+  // whole project is arranged to avoid.
+  const opening = draft.body.trim().split('\n')[0] ?? '';
+  if (!/^(hi|hello|dear|hey|greetings)\b/i.test(opening)) {
+    problems.push('opens with no greeting, which reads as a mass mailing');
+  }
+  // ...and the formal templates are worse than none: they are what bulk mail opens with.
+  if (/^(dear (sir|madam|sir\/madam|hiring manager|recruiter|team)|to whom it may concern)/i.test(opening)) {
+    problems.push(`opens with a form-letter greeting ("${opening.slice(0, 40)}")`);
+  }
+
+  // `job_scores.hook` is written as a résumé bullet — "Built a distributed suggestion engine
+  // achieving p95 8ms latency" — and the model pastes it in verbatim, subject and all
+  // missing. A sentence with no subject is a CV line; an email is written by a person.
+  const firstSentence = draft.body.trim().split('\n').slice(1).join(' ').trim();
+  if (/^(built|designed|engineered|implemented|developed|created|achieved|scaled|architected|delivered|led)\b/i.test(firstSentence)) {
+    problems.push('the first sentence is a résumé fragment, not a sentence ("Built…" not "I built…")');
+  }
+
   // Measured on the first real draft: the model wrote "As a final-year computer science
   // student at BITS Pilani", which the resume does not say — his education runs 2024–2027.
   // It came from the scorer's `reasoning`, which is written in the rubric's voice ("a
@@ -169,6 +214,8 @@ export type Drafter = {
     score: JobScore,
     profile: Profile,
     signal?: AbortSignal,
+    /** The contact's name, when the cascade found one. Most are role addresses with none. */
+    contactName?: string | null,
   ) => Promise<DraftResult>;
 };
 
@@ -181,7 +228,7 @@ export type Drafter = {
  */
 export const groqDrafter: Drafter = {
   model: modelFor('draft').id,
-  compose: async (job, company, score, profile, signal) => {
+  compose: async (job, company, score, profile, signal, contactName) => {
     const prompt = [
       profileForPrompt(profile),
       '',
@@ -191,7 +238,14 @@ export const groqDrafter: Drafter = {
       '',
       '---',
       '',
-      `Open with this hook, rephrased naturally: ${score.hook}`,
+      // A personal name is used only when the posting itself gave us one. Anything else is
+      // an inference, and getting a stranger's name wrong in the first line of a cold email
+      // is worse than not using one at all — so the default is the company greeting, which
+      // is perfectly normal to receive.
+      contactName === undefined || contactName === null || contactName.trim() === ''
+        ? `You do not know the recipient's name, and must not guess or invent one. Greet them exactly as: Hi ${greetingName(company)} team,`
+        : `Greet the recipient by their first name. Their name is: ${contactName}`,
+      `After the greeting, open with this hook, rephrased naturally: ${score.hook}`,
       // `score.reasoning` is deliberately NOT sent. It is written in the rubric's voice and
       // asserts things the resume does not — "a final-year student" among them, which went
       // straight into the first real draft as fact.

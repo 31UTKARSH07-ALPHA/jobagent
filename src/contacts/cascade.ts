@@ -307,7 +307,10 @@ async function githubEmails(
   return [
     {
       email: email.toLowerCase(),
-      name: company.name,
+      // Explicitly null. `contacts.name` means *a person*, and this is an organisation
+      // mailbox — putting the company name here made the drafter greet "Hi Convin," as
+      // though Convin were somebody's first name.
+      name: null,
       title: null,
       source: 'github',
       rank: rankEmail(email, 'github', company.domain),
