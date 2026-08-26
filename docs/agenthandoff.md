@@ -183,6 +183,15 @@ pursuing.
 
 ## Next action
 
+**0a. `data/profile.json` was hand-corrected on 2026-08-27 and those edits are NOT in git**
+(the file is gitignored, and `node src/match/profile.ts` regenerates it from the resume PDF and
+will silently overwrite them). Decision 034 records exactly what changed. Two claims were
+wrong against Utkarsh's own repositories: "Reduced DB writes by 5×" where his `CHANGES.md`
+measured **1.08**, and two projects named "Distributed" where one is a single-host Docker
+cluster and the other has no network at all. **The durable fix is the resume PDF, which is
+his to edit** — until then the PDF and the emails disagree, and re-extracting the profile
+undoes the correction.
+
 **0. He read the eight drafts on 2026-08-27 and they are approved in substance** — "now its
 looking good emails to reach out". One thing came back: they had no greeting. Seven of eight
 opened mid-sentence, one said "Hi Stripe Team," — fixed in 033, along with his instruction
@@ -230,6 +239,16 @@ that would be new-bug shaped: a `[draft]` fault naming the same company every mo
   drafts to the *same* address (there is a test asserting exactly that). Convin, Uplers and
   Spyne each have more than one open role. Does the second one queue for approval, or wait
   until the first is answered? Phase 3 needs this decided before it can send anything.
+
+**4a. The re-score that is now owed.** The profile changed, so the 95 stored hooks were written
+from a version of his resume that no longer stands — 63 of them say "distributed", and the 8
+drafts in Gmail still open on it. Nothing is false enough to be urgent (the Redis Cluster is
+real; only the 5× was wrong, and that hook was regenerated), but the emails will not reflect
+the corrected wording until `PROMPT_VERSION` is bumped and `node src/match/score.ts --rescore`
+runs (~45–100 min unattended), followed by `node src/draft/index.ts --redraft`. **Wait for the
+resume PDF to be updated first**, then re-extract the profile, then do it once — and re-check
+`MATCH_THRESHOLD` against the new distribution (024), because job 78 already moved to exactly
+70 under the corrected profile.
 
 **5. Then the work, and the fork from last session is still open.**
 

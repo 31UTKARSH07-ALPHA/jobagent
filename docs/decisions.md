@@ -1331,3 +1331,64 @@ drafts already written, and `UNIQUE(job_id)` guarantees the stage will never rev
 with `drafts.update`, keeping the draft id — which is the handle that makes an ambiguous send
 answerable later (007), so delete-and-recreate is not an option. It never touches a sent email
 and never touches state.
+
+---
+
+## 034 — Claims are traced to artifacts, not to the resume's adjectives
+
+**Decision.** Every quantitative claim the pipeline can put in an email was checked against the
+source repository it describes, and `data/profile.json` was corrected where the artifact did
+not support the wording. Two projects were renamed away from "Distributed".
+
+**Why this is a pipeline concern and not a resume concern.** It is both, but the pipeline is
+what makes it urgent: the chain is
+
+```
+resume PDF → data/profile.json → job_scores.hook → the email
+```
+
+and at the time of checking, **8 of 8 drafted emails and 63 of 95 stored hooks** opened on a
+"distributed" claim. One sentence from the resume was about to become two-thirds of everything
+this system says about him. The drafter is not at fault — decision 032's checker stops it
+inventing claims, and it was faithfully repeating the profile. **A checker that verifies the
+model against the resume cannot catch a resume that overstates.**
+
+**What the repositories actually showed** (`Search-TypeAhead-System`, `Distributed-Cache-System`):
+
+| Claim | Artifact | Verdict |
+|---|---|---|
+| p95 8 ms / p99 ~11 ms on `/suggest` | JMeter: p95=8, p99=11, mean=4.62, 1,800 samples, 0 errors | exact |
+| 150K rows → 1.88M prefix entries | 150,000 rows loaded; full build confirmed by Utkarsh | kept |
+| Redis Cluster, consistent-hash ring | `--cluster create` over 6 nodes, `--cluster-replicas 1` → 3 masters + 3 replicas, one host | real, but single-host and never failure-tested |
+| "Reduced DB writes by 5×" | **measured write-reduction factor 1.08** in his own `CHANGES.md` | **removed** |
+| "Distributed" cache, 1M+ ops/sec | no sockets, no RPC — nodes are objects in one JVM | renamed to "Sharded"; the benchmark figure was already honest |
+
+The 5× was the dangerous one and nobody was looking at it. It appears to be a misreading of
+the exercise's own traffic spec (`PROBLEM.md`: *"Typeahead API requests/second (peak, 5x)"*).
+The mechanism is real — the aggregator does collapse repeated queries in a flush window — but
+the benchmark used mostly distinct prefixes, so there was nothing to collapse. The profile now
+states the **mechanism with no multiplier**, which is true under any traffic mix.
+
+**Precision reads as competence, not modesty.** "6-node Redis Cluster (3 masters, 3 replicas,
+single-host Docker), hand-rolled consistent-hash ring mapping prefixes to hash-tag buckets" is
+longer than "distributed typeahead system" and *stronger*, because every clause is checkable
+and it demonstrates knowing why the ring exists at all — Redis Cluster rejects multi-key
+operations across slots, so the ring groups prefixes into hash tags to make index writes
+pipelineable. That is the answer to the obvious interview question, and it only exists once
+the claim is specific.
+
+**`data/profile.json` is generated and gitignored — these edits are not in version control.**
+`node src/match/profile.ts` re-extracts it from the resume PDF and will silently overwrite
+them. The durable fix is the **PDF**, which is also what a recruiter reads beside the email;
+if the two disagree, the email is the one that looks invented. This entry is the only record
+of what was changed and why.
+
+**Scores move when the profile does.** Job 78 was re-scored against the corrected profile and
+landed on exactly 70 — the match threshold. A full re-score after the resume is updated will
+shift the distribution, so re-check `MATCH_THRESHOLD` against it (decision 024) rather than
+assuming it carries over.
+
+**Historic hooks are left alone.** One v3 row still carries the 5× wording. `job_scores` is
+keyed on `prompt_version` precisely so history survives (008), and the digest and drafter both
+read the newest score per job, so it is never used. Rewriting it would be falsifying the record
+of what the pipeline believed at the time.
