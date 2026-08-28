@@ -32,6 +32,20 @@ export type LaunchdJob = {
   /** Local time. launchd runs a missed calendar job on wake, which is the point. */
   hour: number;
   minute: number;
+  /**
+   * Seconds between runs. When set, the job uses `StartInterval` and `hour`/`minute` are
+   * only a label for `--status`.
+   *
+   * The two schedule kinds answer different questions. A calendar entry means "at 06:00,
+   * and if the laptop was shut then the moment it wakes" — right for a thing that happens
+   * once a day and must not be skipped. An interval means "roughly this often", which is
+   * right for a poll where a missed slot costs an hour of freshness and nothing else.
+   */
+  intervalSeconds?: number;
+  /** Extra environment for the wrapper — the fast lane redirects its own log. */
+  env?: Record<string, string>;
+  /** Passed through to `src/main.ts`. */
+  args?: readonly string[];
 };
 
 /**
@@ -48,6 +62,47 @@ export const DAILY: LaunchdJob = {
   hour: 6,
   minute: 0,
 };
+
+/**
+ * The hourly fast lane: ingest → score → alert, and nothing that writes email.
+ *
+ * Measured 2026-08-28: a posting reached the pipeline a median of **3–12 hours** after its
+ * alert email landed, and up to 24, purely because the poll ran once a day. That delay is
+ * ours; the rest — LinkedIn and Naukri sending *daily digests* — is not. This recovers our
+ * share, which is the only share available (decision 036).
+ *
+ * `StartInterval`, not a calendar entry: a missed hourly slot is worth an hour of freshness,
+ * so there is nothing to catch up on when the laptop wakes. Under launchd this only fires
+ * while the machine is awake, which is correct — an application sent at 03:00 is not early,
+ * it is odd.
+ */
+export const HOURLY: LaunchdJob = {
+  label: 'com.utkarsh.jobagent.hourly',
+  script: 'scripts/run-daily.sh',
+  hour: 0,
+  minute: 0,
+  intervalSeconds: 3600,
+  env: { JOBAGENT_LOG: 'hourly' },
+  args: ['--fast'],
+};
+
+/** Everything `--install` installs. */
+export const JOBS: readonly LaunchdJob[] = [DAILY, HOURLY];
+
+/**
+ * When this job next runs, in words.
+ *
+ * `--status` exists to be believed. An interval job reported as "next run 00:00" is a status
+ * line that is confidently wrong, which is worse than no status line at all.
+ */
+export const scheduleOf = (job: LaunchdJob): string =>
+  job.intervalSeconds === undefined
+    ? `${String(job.hour).padStart(2, '0')}:${String(job.minute).padStart(2, '0')} local, daily`
+    : `every ${Math.round(job.intervalSeconds / 60)} min while the laptop is awake`;
+
+/** The log this job actually writes, which is not always `daily.log`. */
+export const logPathOf = (job: LaunchdJob): string =>
+  join(ROOT, 'logs', `${job.env?.['JOBAGENT_LOG'] ?? 'daily'}.log`);
 
 export function plistPath(label: string): string {
   return join(homedir(), 'Library', 'LaunchAgents', `${label}.plist`);
@@ -104,7 +159,9 @@ export function buildPlist(
   <key>ProgramArguments</key>
   <array>
     <string>/bin/sh</string>
-    <string>${esc(join(root, job.script))}</string>
+    <string>${esc(join(root, job.script))}</string>${(job.args ?? [])
+      .map((a) => `\n    <string>${esc(a)}</string>`)
+      .join('')}
   </array>
 
   <!-- node's --env-file-if-exists=.env resolves against cwd, and launchd's cwd is /. -->
@@ -121,10 +178,14 @@ export function buildPlist(
     <!-- token.json and credentials.json are read relative to WorkingDirectory, but
          Google's client still wants a HOME to exist. -->
     <key>HOME</key>
-    <string>${esc(home)}</string>
+    <string>${esc(home)}</string>${Object.entries(job.env ?? {})
+      .map(([k, v]) => `\n    <key>${esc(k)}</key>\n    <string>${esc(v)}</string>`)
+      .join('')}
   </dict>
 
-  <!-- StartCalendarInterval, not StartInterval: a shut or sleeping laptop runs the
+  ${
+    job.intervalSeconds === undefined
+      ? `<!-- StartCalendarInterval, not StartInterval: a shut or sleeping laptop runs the
        missed job on wake instead of drifting a little further every day. -->
   <key>StartCalendarInterval</key>
   <dict>
@@ -132,7 +193,12 @@ export function buildPlist(
     <integer>${job.hour}</integer>
     <key>Minute</key>
     <integer>${job.minute}</integer>
-  </dict>
+  </dict>`
+      : `<!-- StartInterval: a missed poll costs an hour of freshness and nothing else, so
+       there is deliberately no catch-up run on wake. -->
+  <key>StartInterval</key>
+  <integer>${job.intervalSeconds}</integer>`
+  }
 
   <!-- False on purpose: loading the agent, or logging in, must not fire a pipeline
        run and a Telegram digest. -->
@@ -204,10 +270,10 @@ function install(job: LaunchdJob): number {
 
   console.log(
     [
-      `loaded ${job.label} — next run ${String(job.hour).padStart(2, '0')}:${String(job.minute).padStart(2, '0')} local`,
+      `loaded ${job.label} — ${scheduleOf(job)}`,
       `  node   ${node.path}`,
       `  runs   ${script}`,
-      `  log    ${join(ROOT, 'logs', 'daily.log')}`,
+      `  log    ${logPathOf(job)}`,
       '',
       'macOS lists this under System Settings → General → Login Items & Extensions.',
       'If it gets switched off there, launchd will not run it.',
@@ -254,7 +320,8 @@ function status(job: LaunchdJob): number {
     .filter((l) => keep.test(l))
     .map((l) => `  ${l.trim()}`);
   console.log(`state   loaded\n${lines.join('\n')}`);
-  console.log(`\nlog     tail -f ${join(ROOT, 'logs', 'daily.log')}`);
+  console.log(`sched   ${scheduleOf(job)}`);
+  console.log(`log     tail -f ${logPathOf(job)}\n`);
   return 0;
 }
 
@@ -270,7 +337,7 @@ function kickstart(job: LaunchdJob): number {
   }
   console.log(
     `started now (${out.out.trim()}) — this is a real run and will send a digest\n` +
-      `tail -f ${join(ROOT, 'logs', 'daily.log')}`,
+      `tail -f ${logPathOf(job)}`,
   );
   return 0;
 }
@@ -285,11 +352,21 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       print: { type: 'boolean', default: false },
       kickstart: { type: 'boolean', default: false },
       at: { type: 'string' },
+      job: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
 
-  let job = DAILY;
+  // `--job` narrows to one lane; without it, install/uninstall/status act on both, because
+  // installing half a schedule and getting no error is exactly the silent-gap failure this
+  // project keeps having.
+  const wanted = values.job;
+  if (wanted !== undefined && !['daily', 'hourly'].includes(wanted)) {
+    console.error(`--job expects "daily" or "hourly", got "${wanted}"`);
+    return 2;
+  }
+
+  let daily = DAILY;
   if (values.at !== undefined) {
     const m = /^(\d{1,2}):(\d{2})$/.exec(values.at);
     const hour = Number(m?.[1]);
@@ -298,33 +375,45 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       console.error(`--at expects HH:MM in 24h local time, got "${values.at}"`);
       return 2;
     }
-    job = { ...DAILY, hour, minute };
+    daily = { ...DAILY, hour, minute };
   }
+
+  const selected: LaunchdJob[] =
+    wanted === 'hourly' ? [HOURLY] : wanted === 'daily' ? [daily] : [daily, HOURLY];
 
   if (values.help || !(values.install || values.uninstall || values.status || values.print || values.kickstart)) {
     console.log(
       [
-        'usage: node src/schedule/launchd.ts [--install|--uninstall|--status|--print|--kickstart] [--at=HH:MM]',
+        'usage: node src/schedule/launchd.ts [--install|--uninstall|--status|--print|--kickstart]',
+        '                                    [--job=daily|hourly] [--at=HH:MM]',
         '',
-        `  --install    write ~/Library/LaunchAgents/${DAILY.label}.plist and load it`,
-        '  --uninstall  unload and delete it',
+        '  two agents, and both are installed unless --job says otherwise:',
+        `    ${DAILY.label}   06:00, the full pipeline`,
+        `    ${HOURLY.label}  hourly, ingest → score → alert only`,
+        '',
+        '  --install    write the plists into ~/Library/LaunchAgents and load them',
+        '  --uninstall  unload and delete them',
         '  --status     loaded? last exit code? next run?',
         '  --print      show the plist without installing anything',
-        '  --kickstart  run it now through launchd — a real run, sends a real digest',
-        `  --at=HH:MM   schedule time, default ${String(DAILY.hour).padStart(2, '0')}:${String(DAILY.minute).padStart(2, '0')}`,
+        '  --kickstart  run it now through launchd — a real run, sends a real message',
+        `  --at=HH:MM   time for the daily job, default ${String(DAILY.hour).padStart(2, '0')}:${String(DAILY.minute).padStart(2, '0')}`,
       ].join('\n'),
     );
     return 0;
   }
 
   if (values.print) {
-    process.stdout.write(buildPlist(job));
+    for (const one of selected) process.stdout.write(buildPlist(one));
     return 0;
   }
-  if (values.install) return install(job);
-  if (values.uninstall) return uninstall(job);
-  if (values.kickstart) return kickstart(job);
-  return status(job);
+
+  // Worst code wins: installing one agent and failing the other must not report success.
+  const worst = (codes: number[]): number => codes.reduce((a, b) => (b !== 0 ? b : a), 0);
+
+  if (values.install) return worst(selected.map((one) => install(one)));
+  if (values.uninstall) return worst(selected.map((one) => uninstall(one)));
+  if (values.kickstart) return worst(selected.map((one) => kickstart(one)));
+  return worst(selected.map((one) => status(one)));
 }
 
 if (import.meta.main) {

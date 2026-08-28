@@ -35,6 +35,24 @@ import {
  */
 export const MAX_DRAFTS_PER_RUN = 8;
 
+/**
+ * Which contacts are worth writing to **at all, for now**.
+ *
+ * Utkarsh's call, 2026-08-28: send only to addresses published on a company's own site, and
+ * revisit guesses once there is evidence either way. 34 of 62 contacts are pattern guesses at
+ * `careers@`, and a guess that is wrong costs a bounce against the personal Gmail account he
+ * uses for everything — while a guess that is *right* still lands in a shared inbox that may
+ * ignore unsolicited mail. Neither outcome is worth spending reputation on before the
+ * published addresses have shown whether cold email works at all.
+ *
+ * This gates **drafting**, not just sending, on purpose: the drafts are his review queue, and
+ * a queue full of emails he has decided not to send is a queue he stops reading.
+ *
+ * Set back to `['high', 'medium', 'low']` to turn guesses on — that is the whole switch, and
+ * the open question it answers is in `agenthandoff.md`.
+ */
+export const DRAFTABLE_CONFIDENCE: readonly string[] = ['high', 'medium'];
+
 /** A job ready to be written about, with everything the composer needs. */
 type Draftable = {
   job: Job;
@@ -66,13 +84,14 @@ export function draftableJobs(ctx: StageContext, limit = MAX_DRAFTS_PER_RUN): Dr
          JOIN contacts k ON k.company_id = j.company_id
         WHERE j.state = 'DRAFTED'
           AND k.mx_valid = 1
+          AND k.confidence IN (${DRAFTABLE_CONFIDENCE.map(() => '?').join(', ')})
           AND NOT EXISTS (SELECT 1 FROM outreach o WHERE o.job_id = j.id)
         GROUP BY j.id
         ORDER BY (SELECT MAX(s.fit_score) FROM job_scores s WHERE s.job_id = j.id) DESC,
                  j.first_seen_at DESC
         LIMIT ?`,
     )
-    .all(limit) as {
+    .all(...DRAFTABLE_CONFIDENCE, limit) as {
     job_id: number;
     company: string;
     contact_id: number;

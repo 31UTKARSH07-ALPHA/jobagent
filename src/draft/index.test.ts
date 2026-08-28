@@ -150,6 +150,15 @@ test('a job whose company has no contact is not drafted', () => {
   assert.deepEqual(draftableJobs(context(db).ctx), []);
 });
 
+test('a guessed address is not drafted while the policy is trusted-only', () => {
+  // His call, 2026-08-28: published addresses first, guesses only once there is evidence.
+  // Gated at drafting rather than sending because the drafts are his review queue.
+  const db = openDb(':memory:');
+  ready(db);
+  db.prepare("UPDATE contacts SET source = 'pattern', confidence = 'low'").run();
+  assert.deepEqual(draftableJobs(context(db).ctx), []);
+});
+
 test('a contact whose domain failed the MX check is not written to', () => {
   const db = openDb(':memory:');
   ready(db);

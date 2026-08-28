@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildPlist, DAILY, plistPath, resolveNode, ROOT } from './launchd.ts';
+import { DAILY, HOURLY, ROOT, buildPlist, plistPath, resolveNode } from './launchd.ts';
 
 const PLIST = buildPlist(DAILY, { root: '/Users/x/jobagent', node: '/opt/homebrew/bin/node', home: '/Users/x' });
 
@@ -90,3 +90,34 @@ function plistFrom(xml: string): any {
   writeFileSync(file, xml);
   return JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', file], { encoding: 'utf8' }));
 }
+
+test('the hourly agent polls on an interval, not a calendar', () => {
+  // A missed hourly poll costs an hour of freshness and nothing else, so there is nothing
+  // to catch up on at wake — the opposite of the daily run, which must not be skipped.
+  const plist = buildPlist(HOURLY);
+
+  assert.match(plist, /<key>StartInterval<\/key>\s*<integer>3600<\/integer>/);
+  assert.ok(!plist.includes('StartCalendarInterval'));
+});
+
+test('the hourly agent runs the fast lane and its own log', () => {
+  const plist = buildPlist(HOURLY);
+
+  assert.match(plist, /<string>--fast<\/string>/);
+  // Twenty-four "nothing new" runs a day in daily.log would bury the entry anybody reads.
+  assert.match(plist, /<key>JOBAGENT_LOG<\/key>\s*<string>hourly<\/string>/);
+});
+
+test('the two agents cannot collide in launchd', () => {
+  assert.notEqual(DAILY.label, HOURLY.label);
+  assert.notEqual(plistPath(DAILY.label), plistPath(HOURLY.label));
+});
+
+test('the daily agent is unchanged by the hourly one existing', () => {
+  const plist = buildPlist(DAILY);
+  assert.match(plist, /<key>StartCalendarInterval<\/key>/);
+  // Matched as a key, not as text: the daily plist's own comment says the words
+  // "not StartInterval", and a substring check reads that as the setting being present.
+  assert.ok(!/<key>StartInterval<\/key>/.test(plist));
+  assert.ok(!plist.includes('--fast'));
+});

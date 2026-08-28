@@ -22,6 +22,7 @@ import { runScore } from './match/score.ts';
 import { runContacts } from './contacts/index.ts';
 import { runDraft } from './draft/index.ts';
 import { runDigest } from './notify/digest.ts';
+import { runAlert } from './notify/alert.ts';
 import { reportFaults } from './notify/health.ts';
 
 export type { Stage, StageContext };
@@ -35,6 +36,20 @@ const notYet = (phase: 1 | 2 | 3, what: string): Stage => ({
  * Execution order for the daily run. `track` is deliberately excluded: it runs on its
  * own 4-hourly schedule because replies and bounces arrive continuously.
  */
+/**
+ * The hourly fast lane: find new postings and say so, nothing else.
+ *
+ * Contacts, drafting and the digest stay on the 06:00 schedule — they are slow, they write to
+ * Gmail, and none of them gets better for running twenty-four times a day. What does get
+ * better is *when he hears about a job*: measured 2026-08-28, a posting reached the pipeline a
+ * median of 3–12 hours after the alert email arrived, purely because the poll was daily
+ * (decision 036).
+ *
+ * Both stages are idempotent, so an hourly run that overlaps the daily one is safe; the lock
+ * in `run-daily.sh` is about not paying for the same Groq call twice, not about correctness.
+ */
+export const FAST_STAGES = ['ingest', 'score', 'alert'] as const;
+
 export const DAILY_STAGES = [
   'ingest',
   'prefilter',
@@ -46,6 +61,9 @@ export const DAILY_STAGES = [
   'digest',
   'send',
 ] as const;
+
+// `alert` is deliberately absent from the daily list: at 06:00 the digest is about to run
+// anyway, and two messages about the same job is the failure decision 014 describes.
 
 /**
  * Wall-clock budget per stage. A stage that overruns is abandoned and the run moves on.
@@ -89,6 +107,7 @@ export const STAGES: Record<string, Stage> = {
   contacts: { phase: 2, run: runContacts },
   draft: { phase: 2, run: runDraft },
   digest: { phase: 1, run: runDigest },
+  alert: { phase: 1, run: runAlert },
   send: notYet(3, 'gate, daily cap, jittered 09:00 queue'),
   track: notYet(3, 'replies, bounces, follow-ups'),
 };
@@ -119,6 +138,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     args: argv,
     options: {
       stage: { type: 'string' },
+      fast: { type: 'boolean', default: false },
       'dry-run': { type: 'boolean', default: false },
       db: { type: 'string', default: DEFAULT_DB_PATH },
       help: { type: 'boolean', short: 'h', default: false },
@@ -128,7 +148,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   if (values.help) {
     console.log(
       [
-        'usage: node src/main.ts [--stage=<name>] [--dry-run] [--db=<path>]',
+        'usage: node src/main.ts [--stage=<name>] [--fast] [--dry-run] [--db=<path>]',
+        'fast: the hourly lane — ' + FAST_STAGES.join(' → '),
         `stages: ${Object.keys(STAGES).join(', ')}`,
       ].join('\n'),
     );
@@ -141,14 +162,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   }
 
   const dryRun = values['dry-run'];
-  const toRun = values.stage !== undefined ? [values.stage] : [...DAILY_STAGES];
+  const toRun =
+    values.stage !== undefined
+      ? [values.stage]
+      : values.fast
+        ? [...FAST_STAGES]
+        : [...DAILY_STAGES];
 
   const db = openDb(values.db);
   const runId = startRun(db, dryRun);
   const stats: Record<string, Record<string, number>> = {};
   const errors: RunError[] = [];
 
-  console.log(`run ${runId} — ${values.db}${dryRun ? ' (dry run)' : ''}`);
+  console.log(`run ${runId} — ${values.db}${values.fast ? ' (fast)' : ''}${dryRun ? ' (dry run)' : ''}`);
 
   for (const name of toRun) {
     const stage = STAGES[name]!;

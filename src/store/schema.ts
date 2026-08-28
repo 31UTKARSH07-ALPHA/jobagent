@@ -103,6 +103,8 @@ export const StageName = z.enum([
   "contacts",
   "draft",
   "digest",
+  /** The hourly fast lane's instant ping for a strong match. Not part of the daily run. */
+  "alert",
   "send",
   "track",
 ]);

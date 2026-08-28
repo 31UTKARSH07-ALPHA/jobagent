@@ -39,9 +39,10 @@ node src/contacts/domain.ts --name="Convin" [--llm]  # name → verified domain,
 node src/draft/index.ts --job=12                     # compose one draft, print it, write nothing
 node src/draft/index.ts --redraft                    # rewrite every unsent Gmail draft in place
 
+node src/main.ts --fast                # the hourly lane: ingest → score → alert only
 ./scripts/run-daily.sh                 # exactly what launchd runs at 06:00
-node src/schedule/launchd.ts --status  # loaded? last exit code? how many runs?
-node src/schedule/launchd.ts --install # (re)write and load the agent; --uninstall removes it
+node src/schedule/launchd.ts --status  # both agents: loaded? last exit code? how many runs?
+node src/schedule/launchd.ts --install # (re)write and load both; --job=hourly narrows
 ```
 
 ## Invariants — violating these causes real-world damage
@@ -74,6 +75,12 @@ node src/schedule/launchd.ts --install # (re)write and load the agent; --uninsta
   a token window (`src/llm/rate-limit.ts`), not a timer. Never raise `max_tokens` for
   "headroom" — it is billed whether used or not (decisions 013, 017).
 - Sends are jittered 3–15 min apart starting 09:00. Never fire them all at pipeline time.
+- **Two schedules, not one** (036): 06:00 daily runs everything; an hourly agent runs
+  `ingest → score → alert` in 44s. `run-daily.sh` holds a lock so they cannot overlap, and
+  each writes its own log. Alert-email postings were reaching the pipeline 3–12h late purely
+  because the poll was daily.
+- **Only published addresses are drafted right now** (035) — `DRAFTABLE_CONFIDENCE`. Guesses
+  are one constant away from being turned back on, pending evidence they get replies.
 - LinkedIn/Naukri are ingested by parsing *my own Gmail job-alert emails*, never scraped.
   Alert postings therefore have **no description** — the scorer judges them on title,
   company and location alone (decision 016). Naukri's parser reads the URL *slug*, not the

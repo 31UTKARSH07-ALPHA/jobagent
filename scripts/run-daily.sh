@@ -25,7 +25,9 @@ if [ ! -x "$NODE" ]; then
 fi
 
 LOG_DIR=$ROOT/logs
-LOG=$LOG_DIR/daily.log
+# The hourly fast lane writes its own log. Twenty-four "nothing new" runs a day in
+# daily.log would bury the one entry anybody reads (decision 036).
+LOG=$LOG_DIR/${JOBAGENT_LOG:-daily}.log
 MAX_BYTES=5242880 # 5 MB, ~2 months of runs
 mkdir -p "$LOG_DIR" || exit 1
 
@@ -36,6 +38,30 @@ if [ -f "$LOG" ] && [ "$(wc -c <"$LOG")" -gt "$MAX_BYTES" ]; then
 fi
 
 stamp() { date "+%Y-%m-%dT%H:%M:%S%z"; }
+
+# ── One run at a time ────────────────────────────────────────────────────────
+#
+# The hourly lane and the 06:00 daily run can land on the same minute. Every stage is
+# idempotent, so an overlap is *safe* — it is simply wasteful: two runs scoring the same
+# job pay for two Groq calls out of one 8,000-token minute (decision 017).
+#
+# `mkdir` is the lock because it is atomic on every POSIX filesystem, unlike a test-then-
+# touch. The staleness escape hatch matters more than the lock: a crashed run must not be
+# able to disable the pipeline permanently and silently, which is this project's
+# characteristic failure. An hour is comfortably longer than any healthy run and shorter
+# than the gap to the next daily one.
+LOCK=$LOG_DIR/run.lock
+LOCK_STALE_SECONDS=5400 # 90 min — the score stage alone may budget 75
+
+if ! mkdir "$LOCK" 2>/dev/null; then
+  lock_age=$(( $(date +%s) - $(stat -f %m "$LOCK" 2>/dev/null || echo 0) ))
+  if [ "$lock_age" -lt "$LOCK_STALE_SECONDS" ]; then
+    echo "── $(stamp)  skipped: another run has been going for ${lock_age}s" | tee -a "$LOG"
+    exit 75 # EX_TEMPFAIL, the same code a skipped no-network run uses
+  fi
+  echo "── $(stamp)  taking a stale lock (${lock_age}s old)" | tee -a "$LOG"
+fi
+trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT INT TERM
 
 # ── Wait for the network ─────────────────────────────────────────────────────
 #
@@ -98,7 +124,7 @@ wait_for_network() {
 # The status file exists because the pipeline's exit code is on the far side of a
 # pipe, and `$?` after a pipeline is tee's.
 status_file=$(mktemp -t jobagent-status) || exit 1
-trap 'rm -f "$status_file"' EXIT INT TERM
+trap 'rm -f "$status_file"; rmdir "$LOCK" 2>/dev/null || true' EXIT INT TERM
 
 {
   echo "── $(stamp)  start  ${*:-full pipeline}"

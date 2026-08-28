@@ -1392,3 +1392,78 @@ assuming it carries over.
 keyed on `prompt_version` precisely so history survives (008), and the digest and drafter both
 read the newest score per job, so it is never used. Rewriting it would be falsifying the record
 of what the pipeline believed at the time.
+
+---
+
+## 035 — Trusted addresses only, until guesses prove themselves
+
+**Decision.** `DRAFTABLE_CONFIDENCE` in `src/draft/index.ts` is `['high', 'medium']`. Pattern
+guesses are not drafted at all for now. One constant turns them back on.
+
+**Why, in Utkarsh's words (2026-08-28):** send the trusted ones, try guesses later, and if the
+guesses produce no replies, stop making them and focus on real addresses.
+
+**Why it gates drafting and not just sending.** Sending is where the bounce risk lives, so the
+send gate is the obvious home — but the drafts are also his **review queue**, and a queue full
+of emails he has already decided not to send is a queue he stops opening. Drafting only what
+he would send keeps the morning list worth reading.
+
+Current split: **27 undrafted jobs reachable via a published address, 32 only via a guess.**
+So this costs nothing in the short term — there is a week of trusted work queued ahead of the
+first guess.
+
+**What would settle it.** Reply rate on published addresses versus guessed ones. Note that
+~50–100 sends are needed before a reply rate means anything at all: cold outreach runs 1–10%,
+so zero replies from the first eight is the *expected* result even when everything works. Do
+not conclude anything from the first batch.
+
+---
+
+## 036 — An hourly fast lane, because the daily poll was half the delay
+
+**Decision.** A second launchd agent, `com.utkarsh.jobagent.hourly`, runs
+`ingest → score → alert` every hour. Contacts, drafting and the digest stay at 06:00. A new
+`alert` stage sends an immediate Telegram message for anything scoring ≥ 85.
+
+**Why.** Utkarsh noticed he hears about postings a day late, by which time a hundred people
+have applied. Measured rather than assumed — `posted_at` for an alert-sourced job is the
+*email's arrival time*, so the gap to `first_seen_at` is our own latency and nothing else:
+
+| Ingest day | Median | Max |
+|---|---|---|
+| 2026-08-23 | 73.8h | 155.8h |
+| 2026-08-24 | 3.3h | 6.2h |
+| 2026-08-25 | 4.0h | 4.0h |
+| 2026-08-28 | 12.3h | 12.3h |
+
+The 08-23 row is the catch-up after the expired Gmail token, not steady state. **Healthy, our
+own delay is 3–12 hours and can reach 24** — entirely because the poll ran once a day. Hourly
+polling recovers it. A full fast-lane run takes **44 seconds**.
+
+**What this does not fix, and it is the larger half.** LinkedIn and Naukri send *daily
+digests*. A posting is already a day old before its alert email exists, and no polling rate
+touches that. **The only channel where being early is achievable is a company's own ATS
+board**, which lists a job the minute it is published — which makes expanding
+`src/ingest/candidates.ts` a freshness decision, not just a coverage one (decision 010).
+
+**Why the alert is separate from the digest, and rare.** `ALERT_THRESHOLD` is 85: the
+auto-send band from 006, and one point above the title-only ceiling of 84 (023) — so an alert
+can only ever fire for a posting whose full description was read. Under rubric v4 that is 1 job
+in 91. An hourly ping that fires often is one he learns to swipe away, which is decision 014's
+argument against a status ping. An alerted job is marked digested, so the morning digest never
+repeats it: one job, one message, whichever stage gets there first.
+
+**`StartInterval`, not a calendar entry.** A missed hourly poll costs an hour of freshness and
+nothing else, so there is nothing to catch up on at wake — the opposite of the daily run, which
+must not be skipped (018).
+
+**Two things the second agent forced, and both were latent bugs.** `run-daily.sh` had no lock,
+so an hourly run landing on 06:00 would have paid for the same Groq call twice out of one
+8,000-token minute; it now takes an atomic `mkdir` lock with a 90-minute staleness escape
+hatch, because a crashed run that permanently and silently disables the pipeline is this
+project's characteristic failure. And the two lanes write separate logs — twenty-four "nothing
+new" entries a day would bury the one entry anybody reads.
+
+**`--status` had started lying** and was fixed in the same change: it reported the interval job
+as "next run 00:00" and pointed at `daily.log`. A status command that is confidently wrong is
+worse than no status command.
