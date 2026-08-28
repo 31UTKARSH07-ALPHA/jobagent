@@ -12,6 +12,7 @@ import { RawJob, nowIso, type Profile } from '../store/schema.ts';
 import { transition } from '../store/state.ts';
 import type { StageContext } from '../stage.ts';
 import { runDraft, draftableJobs, MAX_DRAFTS_PER_RUN } from './index.ts';
+import { RAMP } from '../send/gate.ts';
 import type { Drafter } from './compose.ts';
 import type { DraftWriter } from './gmail-draft.ts';
 
@@ -209,22 +210,54 @@ test('the best-scoring jobs are drafted first, and the rest wait', () => {
     ready(db, { title: `Intern ${i}`, fit: 70 + i, company: `Co${i}` });
   }
 
-  const picked = draftableJobs(context(db).ctx);
+  const picked = draftableJobs(context(db).ctx, MAX_DRAFTS_PER_RUN);
   assert.equal(picked.length, MAX_DRAFTS_PER_RUN);
   const scores = picked.map((p) => p.score.fit_score);
   assert.deepEqual(scores, [...scores].sort((a, b) => b - a), 'best first');
   assert.equal(scores[0], 70 + MAX_DRAFTS_PER_RUN + 2);
 });
 
-test('two roles at one company each get their own draft to the same contact', async () => {
+test('drafting is capped by the send ramp, not by the reading limit', () => {
+  // Nothing sent yet means week one, which is three a day. Drafting eight would queue five
+  // he cannot send and has to scroll past (decision 038).
   const db = openDb(':memory:');
-  ready(db, { title: 'Backend Intern' });
-  ready(db, { title: 'ML Intern' });
+  for (let i = 0; i < MAX_DRAFTS_PER_RUN + 3; i++) {
+    ready(db, { title: `Intern ${i}`, fit: 70 + i, company: `Co${i}` });
+  }
+
+  assert.equal(draftableJobs(context(db).ctx).length, RAMP[0]);
+});
+
+test('a second role at the same company is skipped, not queued', async () => {
+  // His call, 2026-08-29: two cold emails from one student in the same week is how a small
+  // company forms an opinion. The higher-scoring role is the one that survives.
+  const db = openDb(':memory:');
+  ready(db, { title: 'Backend Intern', fit: 88 });
+  ready(db, { title: 'ML Intern', fit: 95 });
   const gmail = writer();
+  const { ctx, counts } = context(db);
 
-  await runDraft(context(db).ctx, { drafter, writeDraft: gmail.write, profile });
+  await runDraft(ctx, { drafter, writeDraft: gmail.write, profile });
 
-  assert.equal(gmail.calls.length, 2);
-  assert.deepEqual(gmail.calls.map((c) => c.to), ['careers@acme.com', 'careers@acme.com']);
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM outreach').get()!.n, 2);
+  assert.equal(gmail.calls.length, 1);
+  assert.equal(counts['suppressed_sibling'], 1);
+  const written = db.prepare('SELECT subject FROM outreach').get() as { subject: string };
+  assert.match(written.subject, /ML Intern/, 'the better-scoring role is the one written to');
+});
+
+test('suppression lifts when the first email bounced', () => {
+  // A bounced email never arrived, so the company was never really contacted. Suppression is
+  // a fact about now, which is why it is not a job state.
+  const db = openDb(':memory:');
+  const first = ready(db, { title: 'Backend Intern', fit: 88 });
+  ready(db, { title: 'ML Intern', fit: 80 });
+  db.prepare(
+    `INSERT INTO outreach (job_id, contact_id, subject, body, drafted_at, sent_at)
+     VALUES (?, 1, 's', 'b', ?, ?)`,
+  ).run(first, nowIso(), nowIso());
+
+  assert.equal(draftableJobs(context(db).ctx).length, 0, 'sibling suppressed while it stands');
+
+  db.prepare('UPDATE outreach SET bounced_at = ? WHERE job_id = ?').run(nowIso(), first);
+  assert.equal(draftableJobs(context(db).ctx).length, 1, 'and eligible again once it bounced');
 });

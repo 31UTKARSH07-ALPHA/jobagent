@@ -235,10 +235,10 @@ that would be new-bug shaped: a `[draft]` fault naming the same company every mo
   newest-first (027), right for postings that expire, but it starves the tail. The honest fix
   is a **bigger digest** or a queue that **expires** unsent matches after about a week. Not a
   third ordering. Ask him which.
-- **Suppression.** Now real rather than hypothetical: two roles at one company produce two
-  drafts to the *same* address (there is a test asserting exactly that). Convin, Uplers and
-  Spyne each have more than one open role. Does the second one queue for approval, or wait
-  until the first is answered? Phase 3 needs this decided before it can send anything.
+- ~~**Suppression.**~~ **Decided 2026-08-29 (038): skip the second role**, do not queue it.
+  Implemented in the draft stage; suppression lifts if the first email bounces.
+- ~~**Daily cap.**~~ **Decided: the ramp stands, 3 → 5 → 8** (038). Drafting is capped by it
+  too, so the Drafts folder cannot outrun what can be sent.
 
 **4a. The re-score that is now owed.** The profile changed, so the 95 stored hooks were written
 from a version of his resume that no longer stands — 63 of them say "distributed", and the 8
@@ -314,11 +314,9 @@ not before.
 
 ## Open questions not yet settled
 
-- Daily send cap: architecture says ramp to 8/day; original ask was 10–20. Not resolved.
-- Follow-ups: one at day 4, or none in v1?
-- Suppression: second role at an already-emailed company — approval queue, or skip? **No longer
-  hypothetical:** the draft stage writes one email per job, so two roles at one company are two
-  drafts to the same address today. Phase 3 must resolve this before it sends.
+- Follow-ups: one at day 4, or none in v1? **The last unanswered product question.** The
+  tracker already detects replies and bounces (037); nothing schedules a second email.
+
 - Whether a `careers@` guess is worth sending at all. 34 of 62 contacts are guesses; they can
   never auto-send, so every one of them is a tap he has to make. If he ignores them in
   practice, the cascade should stop producing them rather than fill the queue.

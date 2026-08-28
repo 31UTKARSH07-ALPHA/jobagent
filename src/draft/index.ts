@@ -19,6 +19,7 @@ import { latestScore } from '../store/scores.ts';
 import { nowIso, type Job, type JobScore, type Profile } from '../store/schema.ts';
 import { loadProfile } from '../match/profile.ts';
 import { groqDrafter, type Drafter, type DraftResult } from './compose.ts';
+import { dailyCap, firstSentAt, SUPPRESSED_BY_SIBLING } from '../send/gate.ts';
 import {
   createGmailDraft,
   updateGmailDraft,
@@ -27,11 +28,10 @@ import {
 } from './gmail-draft.ts';
 
 /**
- * Drafts written in one run.
+ * Hard ceiling on drafts per run, whatever the ramp says.
  *
- * A reading limit, like `MAX_ITEMS_PER_DIGEST`: these exist to be reviewed one at a time over
- * breakfast, and a morning that produces thirty of them produces none that get read. The rest
- * keep their state and are drafted tomorrow, costing nothing.
+ * The real limit is `dailyCap()` — drafting more than can be sent just fills the Drafts
+ * folder with a backlog he has to read past. This is the backstop for the top of the ramp.
  */
 export const MAX_DRAFTS_PER_RUN = 8;
 
@@ -56,6 +56,7 @@ export const DRAFTABLE_CONFIDENCE: readonly string[] = ['high', 'medium'];
 /** A job ready to be written about, with everything the composer needs. */
 type Draftable = {
   job: Job;
+  companyId: number;
   company: string;
   contactId: number;
   email: string;
@@ -71,13 +72,16 @@ type Draftable = {
  * exactly 84, so within a tie the newest posting wins — an internship found five days ago may
  * already be closed.
  */
-export function draftableJobs(ctx: StageContext, limit = MAX_DRAFTS_PER_RUN): Draftable[] {
+export function draftableJobs(ctx: StageContext, limit?: number): Draftable[] {
+  // Draft exactly what may be sent. At 3/day in week one, drafting eight would queue five a
+  // day he cannot send and would have to scroll past (decision 038).
+  const cap = Math.min(limit ?? dailyCap(firstSentAt(ctx.db)), MAX_DRAFTS_PER_RUN);
   const rows = ctx.db
     .prepare(
       // A name is only ever used to greet somebody when the *posting* named them. Every
       // other rung yields a role mailbox, and inventing a first name for one is worse than
       // the company greeting it would replace.
-      `SELECT j.id AS job_id, c.name AS company, k.id AS contact_id, k.email,
+      `SELECT j.id AS job_id, j.company_id, c.name AS company, k.id AS contact_id, k.email,
               CASE WHEN k.source = 'posting' THEN k.name END AS contact_name
          FROM jobs j
          JOIN companies c ON c.id = j.company_id
@@ -86,13 +90,18 @@ export function draftableJobs(ctx: StageContext, limit = MAX_DRAFTS_PER_RUN): Dr
           AND k.mx_valid = 1
           AND k.confidence IN (${DRAFTABLE_CONFIDENCE.map(() => '?').join(', ')})
           AND NOT EXISTS (SELECT 1 FROM outreach o WHERE o.job_id = j.id)
+          -- One live conversation per company: a second role where we have already written
+          -- is skipped, not queued (decision 038). Ordering by score means the role that
+          -- survives is the better one.
+          AND NOT ${SUPPRESSED_BY_SIBLING}
         GROUP BY j.id
         ORDER BY (SELECT MAX(s.fit_score) FROM job_scores s WHERE s.job_id = j.id) DESC,
                  j.first_seen_at DESC
         LIMIT ?`,
     )
-    .all(...DRAFTABLE_CONFIDENCE, limit) as {
+    .all(...DRAFTABLE_CONFIDENCE, cap) as {
     job_id: number;
+    company_id: number;
     company: string;
     contact_id: number;
     email: string;
@@ -108,6 +117,7 @@ export function draftableJobs(ctx: StageContext, limit = MAX_DRAFTS_PER_RUN): Dr
     return [
       {
         job,
+        companyId: row.company_id,
         company: row.company,
         contactId: row.contact_id,
         email: row.email,
@@ -145,11 +155,22 @@ export async function runDraft(ctx: StageContext, deps: DraftDeps = {}): Promise
   }
   ctx.log(`drafting ${jobs.length} with ${drafter.model}`);
 
+  // The SQL suppression only sees `outreach` rows that already exist, so two roles at one
+  // company both survive selection in a single batch and would both be drafted. Decision 038
+  // is one live conversation per company, and "within this run" is part of that.
+  const writtenTo = new Set<number>();
+
   for (const item of jobs) {
     if (ctx.signal.aborted) {
       ctx.log('out of time — the rest are drafted next run');
       ctx.count('out_of_time');
       break;
+    }
+
+    if (writtenTo.has(item.companyId)) {
+      ctx.count('suppressed_sibling');
+      ctx.log(`${item.company}: skipping "${item.job.title}" — already writing to them today`);
+      continue;
     }
 
     try {
@@ -199,6 +220,7 @@ export async function runDraft(ctx: StageContext, deps: DraftDeps = {}): Promise
           nowIso(),
         );
 
+      writtenTo.add(item.companyId);
       ctx.count('drafted');
       ctx.log(`${item.company} → ${item.email}: ${draft.subject}`);
     } catch (err) {

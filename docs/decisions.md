@@ -1527,3 +1527,45 @@ units apiece.
 **Bounces are matched by the recipient address in the body, not by thread.** Gmail does not
 reliably thread a non-delivery report with the message that caused it; a report from the far
 side arrives as its own conversation.
+
+---
+
+## 038 — One live conversation per company, and the ramp starts at the first send
+
+**Decision.** Utkarsh's calls, 2026-08-29:
+
+- **A second role at a company already being written to is skipped, not queued.**
+- **The ramp stands: 3/day week one, 5 week two, 8 week three.**
+
+Both are implemented in `src/send/gate.ts` and enforced by the **draft** stage today, ahead of
+the sending machinery that will also use them.
+
+**Why suppression is not a job state.** It is a fact about *now*, and it lifts by itself: if
+that first email bounced it never arrived, so the company was never really contacted and the
+sibling role becomes eligible again. A state would make it permanent and would need an edge
+out of a terminal state to undo. So it is a predicate at selection time —
+`SUPPRESSED_BY_SIBLING` — and there is a test that a bounce lifts it.
+
+**The role that survives is the better one**, because drafting is ordered by score. Suppression
+picks nothing; it only stops the second.
+
+**The within-a-run case was a real gap, caught by a test that had been asserting the opposite.**
+`two roles at one company each get their own draft to the same contact` was a correct test of
+the old behaviour and became a statement of the bug. The SQL predicate only sees `outreach`
+rows that already exist, so in a single morning both roles survive selection — the loop now
+tracks which companies it has written to. Currently 5 companies have two drafted-ready roles
+each (SkilloVilla, Unisys, Vinculum, Stripe, Canonical), so this was not hypothetical.
+
+**Drafting is capped by the ramp, not by the reading limit.** `MAX_DRAFTS_PER_RUN` was a flat
+8, which under a 3/day cap would queue five drafts a morning that cannot be sent — a Drafts
+folder he has to scroll past, which is exactly what decision 035 refused to build. `dailyCap()`
+is now the real limit and 8 is only the backstop at the top of the ramp. First dry run under
+the policy drafted **3**, all on published addresses, no siblings.
+
+**Week one begins at the first send, not at a date in a constant.** `dailyCap()` derives the
+week from `MIN(outreach.sent_at)`, so editing a config file cannot fast-forward the ramp, and
+a pipeline that has never sent is always at the start.
+
+**Still open:** follow-ups — one at day four, or none in v1. The tracker detects replies and
+bounces already (037); nothing schedules a second email, and nothing will until that is
+decided.
