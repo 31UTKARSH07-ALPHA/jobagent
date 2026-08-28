@@ -111,7 +111,26 @@ change either the prompt or the weights, so the old distribution survives for co
 
 ## Phase 3 — Sending
 
-- [ ] `src/send/gate.ts` — auto vs approval, daily cap, ramp, suppression
+**Two deliverability prerequisites, decided 2026-08-28. Neither is optional and both come
+before the first send**, because the account being risked is the personal Gmail he uses for
+everything else:
+
+1. **Bounce tracking ships before the first send, not after.** `src/track/replies.ts` is listed
+   below as though it were follow-on work. It is not: 34 of 62 contacts are guessed `careers@`
+   addresses, and if a third do not exist that is a 15–20% bounce rate against the 2–5%
+   sustained figure where mailbox providers start throttling a sender. Sending without it means
+   nothing notices.
+2. **The gate sends published addresses before guessed ones.** Confidence already distinguishes
+   them (`high` = read off the company's own site, `low` = pattern). While the ramp is
+   establishing reputation, drain the 27 published addresses first; the 34 guesses cost nothing
+   by waiting. This belongs in the gate, not in the draft stage — drafting a guess is free, it
+   is *sending* one that carries the bounce.
+
+**Do not move to an own domain to "look professional".** A new domain has no reputation, which
+is a worse sender profile than an aged personal Gmail. At 8/day the personal account wins;
+revisit past ~20/day (the item under *Later* assumes volume that does not exist yet).
+
+- [ ] `src/send/gate.ts` — auto vs approval, daily cap, ramp, suppression, published-before-guessed
 - [ ] `src/send/queue.ts` — jittered 09:00 scheduler
 - [ ] Telegram approve/reject buttons wired to state transitions
 - [ ] `src/track/replies.ts` — reply + bounce detection, every 4h

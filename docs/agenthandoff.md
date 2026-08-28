@@ -252,7 +252,12 @@ resume PDF to be updated first**, then re-extract the profile, then do it once �
 
 **5. Then the work, and the fork from last session is still open.**
 
-- **Phase 3 — sending.** Everything it needs now exists: `outreach` rows with real
+- **Phase 3 — sending.** Two prerequisites were added to `phases.md` on 2026-08-28 after he
+  asked whether the drafts would reach the inbox: **bounce tracking ships before the first
+  send** (34 of 62 addresses are guesses, and nothing currently notices a bounce), and **the
+  gate drains published addresses before guessed ones** while the ramp establishes reputation.
+  The authentication side is already sound — the Gmail API means Google DKIM-signs everything,
+  so the usual cold-email failure mode does not apply. Everything else it needs now exists: `outreach` rows with real
   `gmail_draft_id`s, contacts with confidence, and a `mx_valid` gate. It starts with
   `src/send/gate.ts` and the ramp (3/day → 5 → 8, mandatory). **Do not start this until he has
   read the drafts** — Phase 3 automates sending whatever Phase 2 produces, and if the drafts
