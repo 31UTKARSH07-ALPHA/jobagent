@@ -1467,3 +1467,63 @@ new" entries a day would bury the one entry anybody reads.
 **`--status` had started lying** and was fixed in the same change: it reported the interval job
 as "next run 00:00" and pointed at `daily.log`. A status command that is confidently wrong is
 worse than no status command.
+
+---
+
+## 037 — Bounce and reply tracking, and the honest answer about spam
+
+**Decision.** `src/track/replies.ts` reads the mailbox on the hourly lane and resolves every
+sent message into one of four outcomes: **replied**, **bounced (unknown mailbox)**, **bounced
+(blocked)**, or **deferred**. It ships *before* the first send, not after.
+
+**Why it is a prerequisite.** Three different failures produce the identical observation —
+silence — and they need three unrelated fixes:
+
+| What happened | Evidence | What to fix |
+|---|---|---|
+| the address does not exist | `550 5.1.1`, an NDR | the contact cascade |
+| we were refused as spam | `550 5.7.1`, "blocked" | reputation, content, volume |
+| it arrived and nobody cared | nothing at all | the email, the hook, the targeting |
+
+Sending without this means spending opportunities and learning nothing from them.
+
+**Spam-foldering cannot be detected from the sender side, and this is the honest answer to
+"how do I know my mail is not going to spam".** When a provider files a message as spam the
+SMTP transaction has already succeeded — 250 OK, no bounce, no notification, nothing comes
+back. What *is* observable is a **rejection**, where the receiving server refuses the message
+and says why, and that is the entire reason `bounce_reason` exists (migration 006). Lumping it
+in with a wrong address would average away the only spam signal available.
+
+A `blocked` bounce is therefore raised through `ctx.fault` rather than logged: a wrong address
+is one job's problem, but being refused on policy grounds affects every future send, and the
+health check is what surfaces that the same morning (decision 026).
+
+**Three things deliberately not done:**
+
+- **No tracking pixel.** The standard answer, and wrong here — an image in a plain-text email
+  is itself a bulk-mail signal, and Gmail's image proxy and Apple Mail Privacy Protection open
+  it whether or not a human did. It would raise spam risk in order to measure spam risk.
+- **No Google Postmaster Tools.** It requires ownership of the sending domain; he sends from
+  `gmail.com`.
+- **No follow-up scheduling yet.** Day-4 follow-ups are still an open question for him, and
+  detection is useful on its own.
+
+**Seed addresses are the one technique that does work**, so `OutgoingDraft.bcc` exists to
+support it: copy addresses he controls at the providers that matter — his eight drafts split
+three Microsoft 365, three Google Workspace — and look at which folder the copy lands in. A
+BCC is invisible to the recipient and carries the byte-identical message, which no separately
+composed test email does.
+
+**A 4.x.x deferral is not a bounce.** It is the receiving server asking us to come back, and
+`BOUNCED` is terminal. It is recorded in `bounce_reason` so a run of them is visible, and the
+row stays in `SENT` awaiting a real answer.
+
+**It rides the hourly lane rather than taking a third agent.** `architecture.md` specified
+four-hourly; hourly costs two Gmail searches, notices a reply three hours sooner, and a reply
+is the one event in this system worth being prompt about. One mailbox pass serves every
+pending row — at eight sends a day the inbox is small and `messages.get` costs five quota
+units apiece.
+
+**Bounces are matched by the recipient address in the body, not by thread.** Gmail does not
+reliably thread a non-delivery report with the message that caused it; a report from the far
+side arrives as its own conversation.

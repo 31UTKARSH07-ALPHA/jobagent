@@ -76,7 +76,7 @@ node src/schedule/launchd.ts --install # (re)write and load both; --job=hourly n
   "headroom" — it is billed whether used or not (decisions 013, 017).
 - Sends are jittered 3–15 min apart starting 09:00. Never fire them all at pipeline time.
 - **Two schedules, not one** (036): 06:00 daily runs everything; an hourly agent runs
-  `ingest → score → alert` in 44s. `run-daily.sh` holds a lock so they cannot overlap, and
+  `ingest → score → alert → track` in ~45s. `run-daily.sh` holds a lock so they cannot overlap, and
   each writes its own log. Alert-email postings were reaching the pipeline 3–12h late purely
   because the poll was daily.
 - **Only published addresses are drafted right now** (035) — `DRAFTABLE_CONFIDENCE`. Guesses
@@ -86,6 +86,10 @@ node src/schedule/launchd.ts --install # (re)write and load both; --job=hourly n
   company and location alone (decision 016). Naukri's parser reads the URL *slug*, not the
   visible text, which truncates the company name.
 - Contacts are cached per **company**, not per job. Assume the cache is warm.
+- **Spam placement is undetectable from the sender side** (037). A message filed as spam
+  completed its SMTP transaction — nothing comes back. Only a *rejection* is observable, which
+  is why `bounce_reason` separates `unknown-mailbox` (fix the cascade) from `blocked` (fix the
+  account's standing). Never add a tracking pixel to measure this: it is itself a bulk signal.
 - **A guessed domain is never believed without proof** — MX records *and* the company's whole
   name on its live home page (decision 030). Two of 69 candidate domains were parked pages that
   resolve and serve HTML, and three more were English words on somebody else's site.

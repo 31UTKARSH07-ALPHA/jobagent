@@ -23,6 +23,7 @@ import { runContacts } from './contacts/index.ts';
 import { runDraft } from './draft/index.ts';
 import { runDigest } from './notify/digest.ts';
 import { runAlert } from './notify/alert.ts';
+import { runTrack } from './track/replies.ts';
 import { reportFaults } from './notify/health.ts';
 
 export type { Stage, StageContext };
@@ -45,10 +46,14 @@ const notYet = (phase: 1 | 2 | 3, what: string): Stage => ({
  * median of 3–12 hours after the alert email arrived, purely because the poll was daily
  * (decision 036).
  *
- * Both stages are idempotent, so an hourly run that overlaps the daily one is safe; the lock
- * in `run-daily.sh` is about not paying for the same Groq call twice, not about correctness.
+ * Every stage here is idempotent, so an hourly run that overlaps the daily one is safe; the
+ * lock in `run-daily.sh` is about not paying for the same Groq call twice, not correctness.
+ *
+ * `track` rides this lane rather than taking a third agent. `docs/architecture.md` specified
+ * four-hourly; hourly costs two Gmail searches and notices a reply three hours sooner, and a
+ * reply is the one event in this system worth being prompt about.
  */
-export const FAST_STAGES = ['ingest', 'score', 'alert'] as const;
+export const FAST_STAGES = ['ingest', 'score', 'alert', 'track'] as const;
 
 export const DAILY_STAGES = [
   'ingest',
@@ -109,7 +114,7 @@ export const STAGES: Record<string, Stage> = {
   digest: { phase: 1, run: runDigest },
   alert: { phase: 1, run: runAlert },
   send: notYet(3, 'gate, daily cap, jittered 09:00 queue'),
-  track: notYet(3, 'replies, bounces, follow-ups'),
+  track: { phase: 3, run: runTrack },
 };
 
 function startRun(db: Db, dryRun: boolean): number {

@@ -29,6 +29,21 @@ export type OutgoingDraft = {
    * later-phases move to an own domain, where it becomes meaningful.
    */
   from?: string;
+  /**
+   * Blind copies. The reason this exists is **seed addresses**, and it is the only way a
+   * sender can ever observe spam placement.
+   *
+   * Spam-*foldering* returns no signal: when a provider files a message as spam the SMTP
+   * transaction has already succeeded (decision 037). The industry answer is to copy
+   * addresses you control at the providers that matter — one Gmail, one Outlook.com — and
+   * look at which folder the copy lands in. A BCC is invisible to the real recipient and
+   * carries the byte-identical message, so it is the highest-fidelity version of that test.
+   *
+   * Not a tracking pixel, deliberately: an image in a plain-text email is itself a bulk-mail
+   * signal, and Gmail's proxy and Apple Mail open it regardless of whether a human did. That
+   * would raise spam risk in order to measure spam risk.
+   */
+  bcc?: readonly string[];
 };
 
 export type CreatedDraft = {
@@ -69,6 +84,7 @@ export function toRawMessage(draft: OutgoingDraft): string {
   const headers = [
     `To: ${draft.to}`,
     ...(draft.from === undefined ? [] : [`From: ${draft.from}`]),
+    ...(draft.bcc === undefined || draft.bcc.length === 0 ? [] : [`Bcc: ${draft.bcc.join(', ')}`]),
     `Subject: ${encodeHeader(draft.subject)}`,
     'MIME-Version: 1.0',
     'Content-Type: text/plain; charset="UTF-8"',

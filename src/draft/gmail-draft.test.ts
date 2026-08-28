@@ -41,6 +41,20 @@ test('the From header is included only when given', () => {
   );
 });
 
+test('seed addresses ride along as a blind copy', () => {
+  // The only way to observe spam placement: a byte-identical copy to an account you own,
+  // invisible to the real recipient (decision 037).
+  const raw = decode(
+    toRawMessage({ to: 'hr@acme.com', subject: 's', body: 'b', bcc: ['seed@gmail.com', 'seed@outlook.com'] }),
+  );
+  assert.match(raw, /\r\nBcc: seed@gmail\.com, seed@outlook\.com\r\n/);
+});
+
+test('no Bcc header when there are no seeds', () => {
+  assert.ok(!decode(toRawMessage({ to: 'a@b.com', subject: 's', body: 'b' })).includes('Bcc:'));
+  assert.ok(!decode(toRawMessage({ to: 'a@b.com', subject: 's', body: 'b', bcc: [] })).includes('Bcc:'));
+});
+
 test('a unicode body survives the round trip', () => {
   const body = 'Hi — I built a p95 8 ms service. Regards,\nUtkarsh Pathak';
   assert.ok(decode(toRawMessage({ to: 'a@b.com', subject: 's', body })).endsWith(body));

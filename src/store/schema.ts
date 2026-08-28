@@ -216,6 +216,14 @@ export const Outreach = z.object({
   /** 09:00 + jitter. Never the pipeline's own run time. */
   scheduled_send_at: Timestamp.nullable(),
   sent_at: Timestamp.nullable(),
+  /**
+   * Why delivery failed, when it did — `unknown-mailbox`, `blocked`, `temporary`, `other`.
+   * The distinction is the only spam signal available to a sender: a wrong address is the
+   * cascade's fault, a policy block is the account's. Migration 006.
+   */
+  bounce_reason: z.string().nullable(),
+  /** Last time the tracker looked at this row. */
+  tracked_at: Timestamp.nullable(),
   followup_sent_at: Timestamp.nullable(),
   replied_at: Timestamp.nullable(),
   bounced_at: Timestamp.nullable(),
