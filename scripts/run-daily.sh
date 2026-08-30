@@ -50,7 +50,9 @@ stamp() { date "+%Y-%m-%dT%H:%M:%S%z"; }
 # able to disable the pipeline permanently and silently, which is this project's
 # characteristic failure. An hour is comfortably longer than any healthy run and shorter
 # than the gap to the next daily one.
-LOCK=$LOG_DIR/run.lock
+# The sender takes its own lock: a long ingest must never delay a scheduled send, and a
+# send must never block job discovery. They touch different rows and SQLite is in WAL mode.
+LOCK=$LOG_DIR/${JOBAGENT_LOCK:-run}.lock
 LOCK_STALE_SECONDS=5400 # 90 min — the score stage alone may budget 75
 
 if ! mkdir "$LOCK" 2>/dev/null; then

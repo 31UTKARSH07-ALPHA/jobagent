@@ -9,6 +9,7 @@
  * Two rules, both Utkarsh's calls on 2026-08-29 (decision 038).
  */
 import type { Db } from '../store/db.ts';
+import type { JobState } from '../store/schema.ts';
 
 /**
  * Emails a day, by week of sending. **Mandatory, and never start at the top** — invariant 5.
@@ -71,4 +72,57 @@ export function suppressedBySibling(db: Db, jobId: number): boolean {
     )
     .get(jobId) as { yes: number } | undefined;
   return row !== undefined;
+}
+
+/**
+ * **The master switch. Sending is off unless this is explicitly on.**
+ *
+ * Everything else in this project is safe to run by accident; this is not. So the default is
+ * disarmed, and arming is a deliberate edit to `.env` rather than a flag someone might leave
+ * in a shell history — `JOBAGENT_SEND=armed`.
+ *
+ * Read at call time, not at import, so a test can arm and disarm around itself and so the
+ * scheduled runs pick up a change without a reinstall.
+ *
+ * With it off, the send stage does **everything except the final API call**: it gates, it
+ * schedules, it logs exactly what would have gone where. That is deliberate — the way to find
+ * out whether this works is to watch it decide, repeatedly, before it can act.
+ */
+export const sendingArmed = (): boolean => process.env['JOBAGENT_SEND'] === 'armed';
+
+/**
+ * Auto-send, or wait for a tap?
+ *
+ * Decision 006 and invariant 3: only an address read off the posting or the company's own site
+ * (`high`) may go without a human, and only when the score is above the band that a posting
+ * with no description can reach at all. Everything else queues.
+ *
+ * Both conditions matter and for different reasons. Confidence is about whether the *address*
+ * is real; the score is about whether the *email* is worth sending. A perfect score to a
+ * guessed address is still a guess.
+ */
+export function sendDecision(
+  confidence: string,
+  fitScore: number,
+): Extract<JobState, 'AUTO_SEND' | 'PENDING_APPROVAL'> {
+  return confidence === 'high' && fitScore > AUTO_SEND_MIN_SCORE ? 'AUTO_SEND' : 'PENDING_APPROVAL';
+}
+
+/** Above this, and only with a `high`-confidence address, an email may send itself. */
+export const AUTO_SEND_MIN_SCORE = 85;
+
+/** How many have actually left today, in local time — what the cap is measured against. */
+export function sentToday(db: Db, now: Date = new Date()): number {
+  const midnight = new Date(now);
+  midnight.setHours(0, 0, 0, 0);
+
+  const row = db
+    .prepare('SELECT COUNT(*) AS n FROM outreach WHERE sent_at IS NOT NULL AND sent_at >= ?')
+    .get(midnight.toISOString()) as { n: number };
+  return row.n;
+}
+
+/** What is left of today's allowance. Never negative. */
+export function remainingToday(db: Db, now: Date = new Date()): number {
+  return Math.max(0, dailyCap(firstSentAt(db), now) - sentToday(db, now));
 }

@@ -1602,3 +1602,79 @@ experiment fails is being judged in week one.
 **Follow-up is not the thing he already ruled out.** Decision 038 skips a *second role* — a new
 pitch, a second conversation. A follow-up is the same ask in the same thread. Both instincts
 point the same way: one conversation per company.
+
+---
+
+## 040 — The send path, shipped disarmed
+
+**Decision.** `src/send/` is complete: `gate.ts` (policy), `queue.ts` (the stage), `deliver.ts`
+(the Gmail call). A third launchd agent runs it every ten minutes. **It sends nothing unless
+`JOBAGENT_SEND=armed`, which is absent from `.env` on purpose.**
+
+Disarmed, the stage does everything except the final API call — gates, re-gates, schedules,
+and logs exactly what would have gone where. That is not a debug mode; it is how confidence in
+this is meant to be earned. Every other part of this project is safe to run by accident. This
+one is not, so the default is off and arming is a deliberate edit to a file rather than a flag
+that could be left in a shell history.
+
+**Why a third agent rather than a stage on the hourly lane.** Jitter only works if something
+checks often. Sends are scheduled 3–15 minutes apart from 09:00, and an hourly poll would fire
+the whole morning's batch in one burst — five emails leaving in the same second is the most
+robotic signal available. Ten minutes is fine against a 3–15 minute spacing, it is the cheapest
+agent here (one indexed query when nothing is due), and it takes its **own lock** so a long
+ingest can never delay a send or the reverse.
+
+**What the first real run decided**, on live data and with no mail sent: 2 cleared to send,
+6 to the approval queue. Which was one too many, and finding that out is what the disarmed
+default is for — see 041.
+
+**`PENDING_APPROVAL` is deliberately not deliverable yet.** Those rows need a Telegram tap and
+the buttons are not built, so they wait. The query excludes the state rather than relying on
+`scheduled_send_at` being unset, because a schedule is not permission.
+
+**The ambiguous-failure path is the whole reason `deliver.ts` exists.** On any failure the
+draft is checked: **gone means it sent**, and reporting that as an error would make the caller
+retry and mail the person twice — the one bug here with consequences outside the laptop. If the
+draft is still there the error is rethrown and the next run retries safely. If the *check*
+itself fails, the original error stands: recording a send we cannot prove is worse than
+retrying one we already made, because `sent_at` staying null means the next run asks again.
+
+A recovered send is raised as a **fault**, not a log line. It means a request failed in a way
+that would have caused a double-send under a naive retry, and that is worth knowing about the
+same morning.
+
+---
+
+## 041 — The current score is the newest one, never the highest
+
+**Decision.** `CURRENT_FIT_SCORE` in `src/store/scores.ts` is the single definition of "this
+job's score": the row with the highest `prompt_version`. Both the gate and the draft ordering
+now use it.
+
+**Found by running the send stage disarmed against real data, which is exactly what the
+disarmed default is for.** The gate read `MAX(s.fit_score)` across every rubric version, and
+`job_scores` deliberately keeps history:
+
+| Job | v2 | v3 | v4 |
+|---|---|---|---|
+| Lakkshions It | **100** | 82 | **84** |
+| Canonical | 86 | **92** | 86 |
+
+So a **title-only alert posting whose current score is 84 was cleared to auto-send** on a v2
+score of 100 — a rubric decision 023 replaced *precisely because* it over-scored postings with
+no description. Decision 023's whole purpose is that title-only tops out at 84, one point below
+the auto-send band, and reading the maximum across versions quietly undid it.
+
+The two readings agree on every job scored once and diverge exactly where it matters: a job
+whose rubric has since been tightened. **History is not a set of alternative opinions to pick
+the best from.** The digest has always taken the newest score; this is that rule, written once,
+for every caller.
+
+**And a demotion edge, `AUTO_SEND → PENDING_APPROVAL`, on a principle worth stating:
+human review may always be added, never automatically removed.** There is deliberately no edge
+back, so nothing but a person's tap can take a job out of the approval queue. The gate now
+re-checks every cleared row each run against the current score and confidence.
+
+That turned the incident into a self-repair: the next run demoted Lakkshions by itself, raised
+it as a fault, and the health check reported it to Telegram the same minute (026). No hand-edit
+— which matters, because the two previous data repairs in this project were both hand-edits.

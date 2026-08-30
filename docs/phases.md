@@ -127,9 +127,12 @@ everything else:
 is a worse sender profile than an aged personal Gmail. At 8/day the personal account wins;
 revisit past ~20/day (the item under *Later* assumes volume that does not exist yet).
 
-- [ ] `src/send/gate.ts` — auto vs approval, daily cap, ramp, suppression, published-before-guessed
-- [ ] `src/send/queue.ts` — jittered 09:00 scheduler
-- [ ] Telegram approve/reject buttons wired to state transitions
+- [x] `src/send/gate.ts` — auto vs approval, daily cap, ramp, suppression (038, 040)
+- [x] `src/send/queue.ts` — jittered 09:00 scheduler, **shipped disarmed** (040)
+- [x] `src/send/deliver.ts` — `drafts.send` with the ambiguous-failure recovery (007)
+- [ ] Telegram approve/reject buttons wired to state transitions — **the last piece.** Needs
+      `grammy`, because approve/reject is a long poll rather than a single POST. Until it
+      exists, `PENDING_APPROVAL` rows correctly wait forever
 - [x] `src/track/replies.ts` — reply + bounce detection, **built 2026-08-28 ahead of sending**
       because it is what turns silence into information (decision 037). Rides the hourly lane.
       Classifies a wrong address apart from a policy refusal, which is the only spam signal a

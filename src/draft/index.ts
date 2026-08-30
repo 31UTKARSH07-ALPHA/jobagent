@@ -15,7 +15,7 @@
 import { parseArgs } from 'node:util';
 import type { StageContext } from '../stage.ts';
 import { getJob } from '../store/jobs.ts';
-import { latestScore } from '../store/scores.ts';
+import { CURRENT_FIT_SCORE, latestScore } from '../store/scores.ts';
 import { nowIso, type Job, type JobScore, type Profile } from '../store/schema.ts';
 import { loadProfile } from '../match/profile.ts';
 import { groqDrafter, type Drafter, type DraftResult } from './compose.ts';
@@ -95,7 +95,7 @@ export function draftableJobs(ctx: StageContext, limit?: number): Draftable[] {
           -- survives is the better one.
           AND NOT ${SUPPRESSED_BY_SIBLING}
         GROUP BY j.id
-        ORDER BY (SELECT MAX(s.fit_score) FROM job_scores s WHERE s.job_id = j.id) DESC,
+        ORDER BY ${CURRENT_FIT_SCORE} DESC,
                  j.first_seen_at DESC
         LIMIT ?`,
     )

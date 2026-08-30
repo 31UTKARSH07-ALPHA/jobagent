@@ -76,8 +76,15 @@ node src/schedule/launchd.ts --install # (re)write and load both; --job=hourly n
   a token window (`src/llm/rate-limit.ts`), not a timer. Never raise `max_tokens` for
   "headroom" — it is billed whether used or not (decisions 013, 017).
 - Sends are jittered 3–15 min apart starting 09:00. Never fire them all at pipeline time.
-- **Two schedules, not one** (036): 06:00 daily runs everything; an hourly agent runs
-  `ingest → score → alert → track` in ~45s. `run-daily.sh` holds a lock so they cannot overlap, and
+- **Sending is disarmed by default** (040). `JOBAGENT_SEND=armed` in `.env` is the only thing
+  that lets real mail leave; without it the send stage gates, schedules and logs what it would
+  have done. Never arm it to "test" something.
+- **A job's score is its newest, never its highest** (041) — `CURRENT_FIT_SCORE`. Reading
+  `MAX(fit_score)` across rubric versions cleared a title-only posting to auto-send on an
+  obsolete v2 score of 100 that v4 had replaced with 84.
+- **Three schedules, not one** (036, 040): 06:00 daily runs everything; an hourly agent runs
+  `ingest → score → alert → track` in ~45s; a sender runs every 10 min so the 09:00 jitter
+  means something. `run-daily.sh` holds a lock so they cannot overlap, and
   each writes its own log. Alert-email postings were reaching the pipeline 3–12h late purely
   because the poll was daily.
 - **Only published addresses are drafted right now** (035) — `DRAFTABLE_CONFIDENCE`. Guesses

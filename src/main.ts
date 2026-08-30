@@ -24,6 +24,7 @@ import { runDraft } from './draft/index.ts';
 import { runDigest } from './notify/digest.ts';
 import { runAlert } from './notify/alert.ts';
 import { runTrack } from './track/replies.ts';
+import { runSend } from './send/queue.ts';
 import { reportFaults } from './notify/health.ts';
 
 export type { Stage, StageContext };
@@ -97,6 +98,9 @@ export const STAGE_BUDGET_MS: Record<string, number> = {
   // that have never been looked up before — 0.5 to 11 seconds each, measured live. The
   // per-company budget inside the stage is what stops one dead host from taking all of it.
   contacts: 15 * 60_000,
+  // Sending is a handful of Gmail calls; the length here is for the ambiguous-failure check,
+  // which is a second round trip per message and is the whole reason a send is recoverable.
+  send: 10 * 60_000,
   // Eight drafts at ~2s each once `reasoning_effort` is low, plus a Gmail write apiece. The
   // headroom is for the token pacer: drafting shares the same 8,000/min window as scoring,
   // so a draft can legitimately sit waiting for room (decision 017).
@@ -113,7 +117,7 @@ export const STAGES: Record<string, Stage> = {
   draft: { phase: 2, run: runDraft },
   digest: { phase: 1, run: runDigest },
   alert: { phase: 1, run: runAlert },
-  send: notYet(3, 'gate, daily cap, jittered 09:00 queue'),
+  send: { phase: 3, run: runSend },
   track: { phase: 3, run: runTrack },
 };
 

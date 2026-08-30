@@ -86,8 +86,33 @@ export const HOURLY: LaunchdJob = {
   args: ['--fast'],
 };
 
+/**
+ * The sender, on its own short interval.
+ *
+ * It is separate from the hourly lane for one reason: **jitter only works if something checks
+ * often**. Sends are scheduled 3–15 minutes apart from 09:00, and an hourly poll would fire
+ * the whole morning's batch in one burst — five emails leaving in the same second is the most
+ * robotic signal available (`docs/architecture.md`), which is exactly what the jitter exists
+ * to avoid. Ten minutes is fine against a 3–15 minute spacing.
+ *
+ * It is also the cheapest agent here: with nothing due it is one indexed query. And it holds
+ * its own lock, so a long ingest can never delay a send or vice versa.
+ *
+ * **Installing it does not turn sending on.** `JOBAGENT_SEND=armed` does, and it is absent
+ * from `.env` on purpose (decision 040).
+ */
+export const SENDER: LaunchdJob = {
+  label: 'com.utkarsh.jobagent.send',
+  script: 'scripts/run-daily.sh',
+  hour: 0,
+  minute: 0,
+  intervalSeconds: 600,
+  env: { JOBAGENT_LOG: 'send', JOBAGENT_LOCK: 'send' },
+  args: ['--stage=send'],
+};
+
 /** Everything `--install` installs. */
-export const JOBS: readonly LaunchdJob[] = [DAILY, HOURLY];
+export const JOBS: readonly LaunchdJob[] = [DAILY, HOURLY, SENDER];
 
 /**
  * When this job next runs, in words.
@@ -361,8 +386,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   // installing half a schedule and getting no error is exactly the silent-gap failure this
   // project keeps having.
   const wanted = values.job;
-  if (wanted !== undefined && !['daily', 'hourly'].includes(wanted)) {
-    console.error(`--job expects "daily" or "hourly", got "${wanted}"`);
+  if (wanted !== undefined && !['daily', 'hourly', 'send'].includes(wanted)) {
+    console.error(`--job expects "daily", "hourly" or "send", got "${wanted}"`);
     return 2;
   }
 
@@ -379,7 +404,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   }
 
   const selected: LaunchdJob[] =
-    wanted === 'hourly' ? [HOURLY] : wanted === 'daily' ? [daily] : [daily, HOURLY];
+    wanted === 'hourly'
+      ? [HOURLY]
+      : wanted === 'send'
+        ? [SENDER]
+        : wanted === 'daily'
+          ? [daily]
+          : [daily, HOURLY, SENDER];
 
   if (values.help || !(values.install || values.uninstall || values.status || values.print || values.kickstart)) {
     console.log(
@@ -389,7 +420,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
         '',
         '  two agents, and both are installed unless --job says otherwise:',
         `    ${DAILY.label}   06:00, the full pipeline`,
-        `    ${HOURLY.label}  hourly, ingest → score → alert only`,
+        `    ${HOURLY.label}  hourly, ingest → score → alert → track`,
+        `    ${SENDER.label}    every 10 min, the send queue (disarmed unless JOBAGENT_SEND=armed)`,
         '',
         '  --install    write the plists into ~/Library/LaunchAgents and load them',
         '  --uninstall  unload and delete them',

@@ -121,3 +121,25 @@ export function scoreDistribution(db: Db, promptVersion: number): ScoreDistribut
     bands,
   };
 }
+
+/**
+ * SQL for a job's **current** score: the one written under the highest `prompt_version`.
+ *
+ * Not `MAX(fit_score)`. The two read the same on a job scored once and diverge exactly where
+ * it matters — a job whose rubric has since been tightened. Lakkshions It scored **100 under
+ * v2 and 84 under v4**, and a gate reading the maximum cleared a title-only posting to
+ * auto-send on the strength of a rubric that decision 023 replaced precisely because it
+ * over-scored postings with no description.
+ *
+ * `job_scores` is keyed on `prompt_version` to keep history for comparison (decision 008);
+ * history is not an alternative opinion to choose the best of. The digest has always taken
+ * the newest score, and this is that rule, written once, for every caller.
+ *
+ * Correlates on `j.id`, so the query it lands in must expose the jobs table as `j`.
+ */
+export const CURRENT_FIT_SCORE = `(
+  SELECT s.fit_score FROM job_scores s
+   WHERE s.job_id = j.id
+   ORDER BY s.prompt_version DESC
+   LIMIT 1
+)`;

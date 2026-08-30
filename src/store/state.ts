@@ -22,7 +22,16 @@ export const TRANSITIONS: Readonly<Record<JobState, readonly JobState[]>> = {
   // retried every 3 days, 3 attempts, then EXPIRED
   NEEDS_CONTACT: ['DRAFTED', 'EXPIRED'],
   DRAFTED: ['AUTO_SEND', 'PENDING_APPROVAL'],
-  AUTO_SEND: ['SENT'],
+  // `AUTO_SEND → PENDING_APPROVAL` is a demotion, and it exists on a principle worth stating:
+  // **human review may always be added, never automatically removed.** There is deliberately
+  // no edge the other way, so a job cannot be promoted out of the approval queue by anything
+  // except a person's tap.
+  //
+  // It earned its place. On 2026-08-30 the gate read `MAX(fit_score)` across every rubric
+  // version and cleared a title-only posting to auto-send on a v2 score of 100 that v4 had
+  // since replaced with 84. Without this edge, unwinding that needed a hand-edit; with it,
+  // the next run demotes it by itself (decision 041).
+  AUTO_SEND: ['SENT', 'PENDING_APPROVAL'],
   PENDING_APPROVAL: ['SENT', 'REJECTED_BY_USER'],
   SENT: ['REPLIED', 'FOLLOW_UP_SENT', 'BOUNCED'],
   FOLLOW_UP_SENT: ['REPLIED', 'BOUNCED', 'CLOSED'],
