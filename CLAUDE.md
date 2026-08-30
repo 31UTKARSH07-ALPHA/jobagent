@@ -38,6 +38,7 @@ node src/gmail/messages.ts --query="from:naukri.com" --links --full   # inspect 
 node src/contacts/domain.ts --name="Convin" [--llm]  # name → verified domain, prints candidates
 node src/draft/index.ts --job=12                     # compose one draft, print it, write nothing
 node src/draft/index.ts --redraft                    # rewrite every unsent Gmail draft in place
+node src/track/replies.ts --status                  # the outreach ledger: sent, replied, bounced
 
 node src/main.ts --fast                # the hourly lane: ingest → score → alert only
 ./scripts/run-daily.sh                 # exactly what launchd runs at 06:00

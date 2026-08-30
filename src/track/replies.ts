@@ -221,3 +221,109 @@ export async function runTrack(ctx: StageContext, deps: TrackDeps = {}): Promise
 
   ctx.log(`checked ${pending.length} sent message(s) against ${inbox.length} since ${oldest.toISOString().slice(0, 10)}`);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLI — the outreach ledger
+//
+//   node src/track/replies.ts --status
+//
+// This exists because of decision 039. "Ship without follow-ups and see whether replies
+// arrive within four or five working days" is an experiment, and an experiment needs a
+// number rather than an impression. Without this it would be judged by whether the inbox
+// *felt* quiet.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Whole days since an ISO timestamp. */
+const daysSince = (at: string): number => Math.floor((Date.now() - Date.parse(at)) / 86_400_000);
+
+/** Working days, counting Mon–Fri only — which is how a recruiter's clock actually runs. */
+export function workingDaysSince(at: string, now: Date = new Date()): number {
+  let count = 0;
+  const cursor = new Date(Date.parse(at));
+  cursor.setHours(0, 0, 0, 0);
+  const end = new Date(now);
+  end.setHours(0, 0, 0, 0);
+
+  while (cursor < end) {
+    cursor.setDate(cursor.getDate() + 1);
+    const day = cursor.getDay();
+    if (day !== 0 && day !== 6) count++;
+  }
+  return count;
+}
+
+if (import.meta.main) {
+  const { parseArgs } = await import('node:util');
+  const { openDb, DEFAULT_DB_PATH } = await import('../store/db.ts');
+
+  const { values } = parseArgs({
+    options: {
+      status: { type: 'boolean', default: false },
+      db: { type: 'string', default: DEFAULT_DB_PATH },
+      help: { type: 'boolean', short: 'h', default: false },
+    },
+  });
+
+  if (values.help || !values.status) {
+    console.log('usage: node src/track/replies.ts --status [--db=<path>]');
+    process.exit(values.help ? 0 : 2);
+  }
+
+  const db = openDb(values.db);
+  const rows = db
+    .prepare(
+      `SELECT c.name AS company, k.email, k.confidence, o.sent_at, o.replied_at,
+              o.bounced_at, o.bounce_reason
+         FROM outreach o
+         JOIN jobs j ON j.id = o.job_id
+         JOIN companies c ON c.id = j.company_id
+         JOIN contacts k ON k.id = o.contact_id
+        WHERE o.sent_at IS NOT NULL
+        ORDER BY o.sent_at`,
+    )
+    .all() as {
+    company: string;
+    email: string;
+    confidence: string;
+    sent_at: string;
+    replied_at: string | null;
+    bounced_at: string | null;
+    bounce_reason: string | null;
+  }[];
+
+  const drafted = (db.prepare('SELECT COUNT(*) AS n FROM outreach').get() as { n: number }).n;
+
+  if (rows.length === 0) {
+    console.log(`nothing sent yet — ${drafted} draft(s) waiting in Gmail`);
+    process.exit(0);
+  }
+
+  for (const r of rows) {
+    const outcome = r.replied_at
+      ? `replied after ${workingDaysSince(r.sent_at, new Date(r.replied_at))} working day(s)`
+      : r.bounced_at
+        ? `bounced (${r.bounce_reason ?? 'unknown'})`
+        : `waiting — ${workingDaysSince(r.sent_at)} working day(s), ${daysSince(r.sent_at)} calendar`;
+    console.log(`  ${r.company.padEnd(24).slice(0, 24)} ${r.email.padEnd(30).slice(0, 30)} ${outcome}`);
+  }
+
+  const replied = rows.filter((r) => r.replied_at !== null).length;
+  const bounced = rows.filter((r) => r.bounced_at !== null).length;
+  const published = rows.filter((r) => r.confidence === 'high').length;
+  const repliedPublished = rows.filter((r) => r.replied_at !== null && r.confidence === 'high').length;
+
+  console.log(`\n${rows.length} sent · ${replied} replied · ${bounced} bounced · ${drafted - rows.length} still drafts`);
+  console.log(`published addresses: ${repliedPublished}/${published} replied`);
+
+  // The two numbers decision 039 turns on, and the caveat that stops them being over-read.
+  const waited = rows.filter((r) => r.replied_at === null && r.bounced_at === null);
+  const ripe = waited.filter((r) => workingDaysSince(r.sent_at) >= 5).length;
+  if (ripe > 0) console.log(`${ripe} past the five-working-day mark with no answer`);
+  if (rows.length < 50) {
+    console.log(
+      `\nToo few to conclude anything: cold outreach runs 1–10%, so ${rows.length} sends can` +
+        ` produce zero replies with nothing wrong. ~50 is where a rate starts to mean something.`,
+    );
+  }
+  process.exit(0);
+}

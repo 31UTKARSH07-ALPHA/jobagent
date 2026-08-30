@@ -1569,3 +1569,36 @@ a pipeline that has never sent is always at the start.
 **Still open:** follow-ups — one at day four, or none in v1. The tracker detects replies and
 bounces already (037); nothing schedules a second email, and nothing will until that is
 decided.
+
+---
+
+## 039 — No follow-ups in v1. Ship the clean experiment first
+
+**Decision.** Utkarsh, 2026-08-30: send without follow-ups, and if replies arrive within four
+or five working days that is fine; implement follow-ups only if they do not.
+
+**Why this is the better version of the question.** A reply rate you had to nudge for tells you
+less than one you did not. With a single follow-up in the mix, a reply on day 6 is ambiguous —
+did the pitch work, or did the reminder? Without it, every reply is attributable to the first
+email, which is the thing actually being tested. The follow-up can be added later against a
+known baseline; it cannot be subtracted.
+
+**What this does *not* change.** The tracker already detects replies and bounces (037). The
+state machine already has `SENT → FOLLOW_UP_SENT → CLOSED` and keeps it — an edge nothing
+takes is not a bug, and removing it would have to be undone the moment this is revisited.
+Nothing schedules a second email, and nothing will until the trigger below fires.
+
+**The trigger, written down so it is not decided by mood.** Revisit if published-address sends
+pass five working days with no reply. `node src/track/replies.ts --status` is the instrument:
+it prints per-message outcomes in **working days** — a Friday send must not read as overdue on
+Sunday — and separates published addresses from guesses, since those are the two populations
+decision 035 exists to compare.
+
+It also prints the caveat that stops the number being over-read: **cold outreach runs 1–10%,
+so fewer than ~50 sends can produce zero replies with nothing wrong.** The first batch is 3 a
+day under the ramp, so a fair read is more than two weeks away. The most likely way this
+experiment fails is being judged in week one.
+
+**Follow-up is not the thing he already ruled out.** Decision 038 skips a *second role* — a new
+pitch, a second conversation. A follow-up is the same ask in the same thread. Both instincts
+point the same way: one conversation per company.

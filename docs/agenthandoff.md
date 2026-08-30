@@ -314,8 +314,11 @@ not before.
 
 ## Open questions not yet settled
 
-- Follow-ups: one at day 4, or none in v1? **The last unanswered product question.** The
-  tracker already detects replies and bounces (037); nothing schedules a second email.
+- ~~Follow-ups~~ **Decided 2026-08-30 (039): none in v1.** Revisit only if published-address
+  sends pass five working days with no reply — `node src/track/replies.ts --status` is the
+  instrument, and it prints the "too few to conclude" caveat on purpose.
+
+**Every product question is now answered. What remains is code and one thing on his desk.**
 
 - Whether a `careers@` guess is worth sending at all. 34 of 62 contacts are guesses; they can
   never auto-send, so every one of them is a tap he has to make. If he ignores them in

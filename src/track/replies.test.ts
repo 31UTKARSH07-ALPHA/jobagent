@@ -13,7 +13,7 @@ import { RawJob, nowIso, type ScoreResult } from '../store/schema.ts';
 import { stateOf, transition } from '../store/state.ts';
 import type { StageContext } from '../stage.ts';
 import type { Email } from '../gmail/messages.ts';
-import { classifyBounce, isBounce, bounceMentions, runTrack, trackable } from './replies.ts';
+import { classifyBounce, isBounce, bounceMentions, runTrack, trackable, workingDaysSince } from './replies.ts';
 
 const context = (db: Db) => {
   const counts: Record<string, number> = {};
@@ -252,4 +252,20 @@ test('nothing sent means no mailbox read at all', async () => {
   });
 
   assert.equal(searched, false);
+});
+
+test('waiting is counted in working days, which is the recruiter\'s clock', () => {
+  // Decision 039 is judged on "four or five working days", so a Friday send must not read as
+  // overdue on Sunday.
+  const friday = new Date('2026-08-28T10:00:00Z'); // a Friday
+  const sunday = new Date('2026-08-30T10:00:00Z');
+  const wednesday = new Date('2026-09-02T10:00:00Z');
+
+  assert.equal(workingDaysSince(friday.toISOString(), sunday), 0, 'the weekend does not count');
+  assert.equal(workingDaysSince(friday.toISOString(), wednesday), 3);
+});
+
+test('a same-day send has waited no time at all', () => {
+  const now = new Date('2026-09-02T18:00:00Z');
+  assert.equal(workingDaysSince('2026-09-02T09:00:00Z', now), 0);
 });
