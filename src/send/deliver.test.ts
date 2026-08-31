@@ -4,7 +4,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { deliver, draftExists } from './deliver.ts';
+import { deliver, draftStatus } from './deliver.ts';
 
 /** Just enough of the Gmail client for these paths. */
 const client = (over: {
@@ -15,10 +15,14 @@ const client = (over: {
     users: {
       drafts: {
         send: over.send ?? (async () => ({ data: { id: 'm1', threadId: 't1' } })),
-        get: over.get ?? (async () => ({ data: { id: 'd1' } })),
+        // An unsent draft: 200, with the message labelled DRAFT.
+        get: over.get ?? (async () => ({ data: { id: 'd1', message: { id: 'm1', labelIds: ['DRAFT'] } } })),
       },
     },
   }) as never;
+
+/** What Gmail really returns for a draft that has already been sent: 200, labelled SENT. */
+const alreadySent = async () => ({ data: { id: 'd1', message: { id: 'm1', labelIds: ['SENT'] } } });
 
 const notFound = () => Object.assign(new Error('Requested entity was not found.'), { code: 404 });
 
@@ -44,6 +48,23 @@ test('a lost response with the draft gone means it sent', async () => {
 
   assert.equal(out.recovered, true);
   assert.equal(out.messageId, null, 'it went; we simply never heard which id');
+});
+
+test('a sent draft still answers 200, and must not be retried', async () => {
+  // Verified against the real account 2026-09-01: `drafts.get` returns 200 for a draft it
+  // has already sent, labelled SENT rather than DRAFT. Asking "does it still exist" gets
+  // "yes" for a message that has gone — and retrying mails the recruiter twice.
+  const out = await deliver(
+    'd1',
+    client({
+      send: async () => {
+        throw new Error('socket hang up');
+      },
+      get: alreadySent,
+    }),
+  );
+
+  assert.equal(out.recovered, true, 'read as sent, not as safe to retry');
 });
 
 test('a failure with the draft still there is a real failure', async () => {
@@ -80,19 +101,49 @@ test('when we cannot even ask, the original error stands', async () => {
   );
 });
 
-test('draftExists reads a 404 as data, not as an error', async () => {
-  assert.equal(await draftExists('d1', client({})), true);
+test('the label is what says whether it has gone', async () => {
+  assert.equal((await draftStatus('d1', client({}))).status, 'draft');
+  assert.equal((await draftStatus('d1', client({ get: alreadySent }))).status, 'sent');
   assert.equal(
-    await draftExists('d1', client({ get: async () => {
+    (await draftStatus('d1', client({ get: async () => {
       throw notFound();
-    } })),
-    false,
+    } }))).status,
+    'missing',
+  );
+});
+
+test('a recovered send carries the ids a reply would arrive under', async () => {
+  // Recording null for both left the recovery working and the thing it recovered
+  // untrackable.
+  const out = await deliver(
+    'd1',
+    client({
+      send: async () => {
+        throw new Error('socket hang up');
+      },
+      get: async () => ({
+        data: { id: 'd1', message: { id: 'm7', threadId: 't7', labelIds: ['SENT'], internalDate: '1756276515000' } },
+      }),
+    }),
+  );
+
+  assert.equal(out.recovered, true);
+  assert.equal(out.messageId, 'm7');
+  assert.equal(out.threadId, 't7');
+});
+
+test('a draft with no labels at all is read as sent, not as safe', async () => {
+  // When the answer is unclear, the conservative reading is the one that cannot produce a
+  // second email.
+  assert.equal(
+    (await draftStatus('d1', client({ get: async () => ({ data: { id: 'd1', message: { id: 'm1' } } }) }))).status,
+    'sent',
   );
 });
 
 test('any other error from the check is still an error', async () => {
   await assert.rejects(
-    draftExists('d1', client({ get: async () => {
+    draftStatus('d1', client({ get: async () => {
       throw Object.assign(new Error('rate limited'), { code: 429 });
     } })),
     /rate limited/,

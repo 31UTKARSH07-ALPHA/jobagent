@@ -1761,3 +1761,49 @@ call it — a stage must take its configuration from the environment it was give
 **What is still unexplained, and stays that way honestly:** the tap on Canonical never arrived.
 Every other tap that morning did. There is no evidence to say why, and no code change is
 justified by a single unreproduced event.
+
+---
+
+## 044 — `drafts.get` returns 200 for a draft it already sent. Read the label
+
+**The near-miss.** Decision 007 makes an ambiguous send answerable by asking Gmail about the
+draft afterwards: *gone means it sent, still there means it did not*. The implementation asked
+`drafts.get` and treated a 404 as "sent". **Gmail does not 404 for a sent draft.** Verified
+against the real account on 2026-09-01:
+
+| Draft | `drafts.get` | `message.labelIds` |
+|---|---|---|
+| never sent | 200 | `["DRAFT"]` |
+| sent by hand four days earlier | **200** | `["SENT"]` |
+
+So on a timeout or a dropped socket the recovery would have concluded "still a draft, not
+sent", rethrown, and the next run would have **mailed the recruiter a second time** — the one
+bug in this project with consequences outside the laptop, in the code written specifically to
+prevent it. It never fired only because sending has never been armed.
+
+`draftStatus()` now reads the label: `draft` is the **only** answer that permits a retry, and
+a message with no labels at all is read as *sent*, because when the answer is unclear the
+conservative reading is the one that cannot produce a second email.
+
+**How it was found:** by asking a plain question — "how do I check whether the mail got sent?"
+— and checking the Gmail account rather than the database. The database said zero sent. Gmail
+disagreed.
+
+**A draft he sends by hand is now reconciled.** On 2026-08-27 he sent one from the Gmail
+interface to `careers@yourfriendlyhr.in`. The pipeline knew nothing, which broke three things
+quietly: the tracker was not watching that thread for a reply or a bounce, the daily cap was
+not counting it, and suppression would have allowed a second role at that company. The tracker
+now checks every unsent draft each hour and records the ones that have gone.
+
+**With Gmail's timestamp, not the current one.** Recorded as "now", the ledger said that email
+had been waiting **zero** working days when it had been out for four — and that number is
+exactly what decision 039's experiment turns on. `internalDate` is the honest answer.
+
+**And with the message and thread ids.** A recovered send used to record `null` for both,
+leaving the recovery working and the thing it recovered untrackable — a reply to it could
+never have been matched to the outreach row.
+
+**`tryTransition` throws on an illegal edge, it does not return false.** The reconciler assumed
+otherwise and would have thrown on the first terminal-state job it met. A terminal state is not
+a race; it has to be asked about with `canTransition` first. The honest record for that row is
+kept as it is: the mail went, and he rejected it afterwards.

@@ -254,6 +254,61 @@ test('nothing sent means no mailbox read at all', async () => {
   assert.equal(searched, false);
 });
 
+test('a draft sent by hand is noticed and recorded', async () => {
+  // He sent one from the Gmail interface on 2026-08-27 and the pipeline knew nothing about
+  // it: not watching the thread, not counting it against the cap, not suppressing siblings.
+  const db = openDb(':memory:');
+  const jobId = sent(db);
+  db.prepare('UPDATE outreach SET sent_at = NULL').run();
+  db.prepare('UPDATE jobs SET state = ? WHERE id = ?').run('AUTO_SEND', jobId);
+
+  const { ctx, counts, faults } = context(db);
+  await runTrack(ctx, {
+    client: {} as never,
+    search: searching([]) as never,
+    draftStatus: async () => ({ status: 'sent' as const, messageId: 'm9', threadId: 't9', sentAt: '2026-08-27T06:15:15.000Z' }),
+  });
+
+  assert.equal(counts['hand_sent'], 1);
+  assert.equal(stateOf(db, jobId), 'SENT');
+  const row = db.prepare('SELECT sent_at, gmail_thread_id FROM outreach').get() as {
+    sent_at: string; gmail_thread_id: string;
+  };
+  // Gmail's timestamp, not this minute — the ledger measures the reply window from it.
+  assert.equal(row.sent_at, '2026-08-27T06:15:15.000Z');
+  assert.equal(row.gmail_thread_id, 't9', 'and the thread, or a reply could never be matched');
+  assert.match(faults[0]!, /by hand/);
+});
+
+test('a draft still sitting in Gmail is left alone', async () => {
+  const db = openDb(':memory:');
+  const jobId = sent(db);
+  db.prepare('UPDATE outreach SET sent_at = NULL').run();
+  db.prepare('UPDATE jobs SET state = ? WHERE id = ?').run('AUTO_SEND', jobId);
+
+  const { ctx, counts } = context(db);
+  await runTrack(ctx, { client: {} as never, search: searching([]) as never, draftStatus: async () => ({ status: 'draft' as const, messageId: null, threadId: null, sentAt: null }) });
+
+  assert.equal(counts['hand_sent'], undefined);
+  assert.equal(stateOf(db, jobId), 'AUTO_SEND');
+});
+
+test('a hand-sent draft on a terminal job is recorded without rewriting history', async () => {
+  // He rejected it *after* sending it by hand. REJECTED_BY_USER is terminal, so the state
+  // stays and the contradiction is reported rather than papered over.
+  const db = openDb(':memory:');
+  const jobId = sent(db);
+  db.prepare('UPDATE outreach SET sent_at = NULL').run();
+  db.prepare('UPDATE jobs SET state = ? WHERE id = ?').run('REJECTED_BY_USER', jobId);
+
+  const { ctx, faults } = context(db);
+  await runTrack(ctx, { client: {} as never, search: searching([]) as never, draftStatus: async () => ({ status: 'sent' as const, messageId: 'm9', threadId: 't9', sentAt: '2026-08-27T06:15:15.000Z' }) });
+
+  assert.equal(stateOf(db, jobId), 'REJECTED_BY_USER');
+  assert.notEqual((db.prepare('SELECT sent_at FROM outreach').get() as { sent_at: string | null }).sent_at, null);
+  assert.match(faults[0]!, /state is left as it is/);
+});
+
 test('waiting is counted in working days, which is the recruiter\'s clock', () => {
   // Decision 039 is judged on "four or five working days", so a Friday send must not read as
   // overdue on Sunday.

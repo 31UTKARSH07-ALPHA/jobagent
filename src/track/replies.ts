@@ -24,8 +24,9 @@ import type { gmail_v1 } from '@googleapis/gmail';
 import type { StageContext } from '../stage.ts';
 import { gmailClient } from '../gmail/auth.ts';
 import { searchEmails, type Email } from '../gmail/messages.ts';
-import { nowIso } from '../store/schema.ts';
-import { tryTransition } from '../store/state.ts';
+import { nowIso, type JobState } from '../store/schema.ts';
+import { canTransition, tryTransition } from '../store/state.ts';
+import { draftStatus, type DraftFacts } from '../send/deliver.ts';
 
 /**
  * How a delivery failed.
@@ -109,18 +110,99 @@ export function trackable(ctx: StageContext): Tracked[] {
     .all() as Tracked[];
 }
 
+/**
+ * Drafts that left without the pipeline sending them.
+ *
+ * A draft is a real object in a real Gmail account, and he can send one himself — on
+ * 2026-08-27 he did, to `careers@yourfriendlyhr.in`, from the Gmail interface. The pipeline
+ * had never been armed and knew nothing about it, which quietly broke three things: the
+ * tracker was not watching that thread for a reply or a bounce, the daily cap was not
+ * counting it, and suppression would have let a second role at that company be written to.
+ *
+ * The check is the one `deliver.ts` already uses for an ambiguous failure: **a draft that is
+ * no longer in Gmail was sent**. Same question, different reason for asking (decision 044).
+ */
+async function reconcileHandSent(
+  ctx: StageContext,
+  gmail: gmail_v1.Gmail,
+  status: (draftId: string, client?: gmail_v1.Gmail, signal?: AbortSignal) => Promise<DraftFacts>,
+): Promise<void> {
+  const unsent = ctx.db
+    .prepare(
+      `SELECT o.id, o.job_id, o.gmail_draft_id AS draft_id, j.state, k.email, c.name AS company
+         FROM outreach o
+         JOIN jobs j ON j.id = o.job_id
+         JOIN companies c ON c.id = j.company_id
+         JOIN contacts k ON k.id = o.contact_id
+        WHERE o.sent_at IS NULL AND o.gmail_draft_id IS NOT NULL`,
+    )
+    .all() as { id: number; job_id: number; draft_id: string; state: JobState; email: string; company: string }[];
+
+  for (const row of unsent) {
+    if (ctx.signal.aborted) return;
+
+    let facts: DraftFacts;
+    try {
+      facts = await status(row.draft_id, gmail, ctx.signal);
+    } catch (err) {
+      // Logged, not swallowed: a check that silently fails every hour is indistinguishable
+      // from one that keeps finding nothing.
+      ctx.log(`could not check the draft for ${row.company}: ${err instanceof Error ? err.message : String(err)}`);
+      continue;
+    }
+    if (facts.status === 'draft') continue;
+
+    // Gmail's own timestamp, not now. It matters: the message he sent by hand had been out
+    // for five days, and recording it as this minute would have told the ledger it had been
+    // waiting zero — which is the number decision 039's whole experiment turns on.
+    ctx.db
+      .prepare(
+        `UPDATE outreach
+            SET sent_at = ?, tracked_at = ?,
+                gmail_message_id = COALESCE(?, gmail_message_id),
+                gmail_thread_id = COALESCE(?, gmail_thread_id)
+          WHERE id = ?`,
+      )
+      .run(facts.sentAt ?? nowIso(), nowIso(), facts.messageId, facts.threadId, row.id);
+
+    // A terminal state cannot be walked forward, and that is the honest record: the mail
+    // went, and he later said no to it. Reported rather than papered over.
+    // `tryTransition` throws on an illegal edge rather than returning false — a terminal
+    // state is not a race, it is a different situation, and it has to be asked about first.
+    const moved = canTransition(row.state, 'SENT') && tryTransition(ctx.db, row.job_id, row.state, 'SENT');
+    ctx.count('hand_sent');
+    ctx.fault(
+      `${row.company} → ${row.email} was sent from Gmail by hand, not by the pipeline` +
+        (moved ? '' : ` — and the job is ${row.state}, so its state is left as it is`),
+    );
+  }
+}
+
 export type TrackDeps = {
   /** Injected so tests never touch a real mailbox. */
   client?: gmail_v1.Gmail;
   search?: typeof searchEmails;
   /** The account's own address, so its own messages are not mistaken for replies. */
   self?: string;
+  /** Injected for tests; the real one asks Gmail whether the id is still a *draft*. */
+  draftStatus?: (draftId: string, client?: gmail_v1.Gmail, signal?: AbortSignal) => Promise<DraftFacts>;
 };
 
 /** How far back to read. Wider than any follow-up window, and bounded so it stays cheap. */
 const LOOKBACK_DAYS = 30;
 
 export async function runTrack(ctx: StageContext, deps: TrackDeps = {}): Promise<void> {
+  // Before asking what happened to what we sent, find out what left without us.
+  const client = deps.client;
+  if (client !== undefined || !ctx.dryRun) {
+    try {
+      const gmail = client ?? gmailClient();
+      await reconcileHandSent(ctx, gmail, deps.draftStatus ?? draftStatus);
+    } catch (err) {
+      ctx.log(`could not reconcile drafts: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   const pending = trackable(ctx);
   if (pending.length === 0) {
     ctx.log('nothing sent is waiting on an answer');

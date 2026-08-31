@@ -53,6 +53,9 @@ node src/schedule/launchd.ts --install # (re)write and load both; --job=hourly n
 
 1. **Never call `gmail.messages.send`.** Always `drafts.create` → store `gmail_draft_id`
    → `drafts.send(id)`. One code path for auto and approved. See `docs/architecture.md`.
+   **After an ambiguous failure, ask whether it is still a *draft*, never whether it still
+   exists** — `drafts.get` returns 200 for a draft it has already sent, labelled `SENT`
+   rather than `DRAFT`. Getting that backwards mails somebody twice (decision 044).
 2. **`outreach` has `UNIQUE(job_id)`.** Double-sending is structurally impossible. Keep it.
 3. **Pattern-guessed emails never auto-send.** Only `confidence='high'` contacts
    (from the posting itself or a company team page) are eligible.
