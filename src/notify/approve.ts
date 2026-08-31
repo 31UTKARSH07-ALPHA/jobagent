@@ -225,5 +225,63 @@ export async function runApprove(ctx: StageContext, deps: ApproveDeps = {}): Pro
     if (tap.messageId !== null) await settle(config, tap.messageId, '🗑 skipped', ctx.signal);
   }
 
-  if (pending.length > 0) ctx.log(`handled ${pending.length} tap(s)`);
+  // Logged even at zero. A poller that has silently stopped receiving taps looks exactly
+  // like a poller with nothing to do, and this project's characteristic failure is the one
+  // that produces no output at all.
+  ctx.log(`polled from offset ${readOffset(ctx)} — ${pending.length} tap(s)`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLI — watch taps arrive, without touching the database
+//
+//   node src/notify/approve.ts --watch
+//
+// For answering "did my tap actually reach the bot?" on its own, which is a different
+// question from "did the stage act on it" and needs separating when one of them breaks.
+// ─────────────────────────────────────────────────────────────────────────────
+if (import.meta.main) {
+  const { parseArgs } = await import('node:util');
+  const { values } = parseArgs({
+    options: {
+      watch: { type: 'boolean', default: false },
+      seconds: { type: 'string', default: '120' },
+      help: { type: 'boolean', short: 'h', default: false },
+    },
+  });
+
+  if (values.help || !values.watch) {
+    console.log('usage: node src/notify/approve.ts --watch [--seconds=120]');
+    process.exit(values.help ? 0 : 2);
+  }
+
+  const found = telegramConfig();
+  if ('problem' in found) {
+    console.error(found.problem);
+    process.exit(1);
+  }
+
+  const until = Date.now() + Number(values.seconds) * 1000;
+  console.log(`watching for taps for ${values.seconds}s — go and press a button\n`);
+
+  let seen = 0;
+  while (Date.now() < until) {
+    const taps = await getTaps(found.config, 0).catch((err: unknown) => {
+      console.error(`getUpdates failed: ${err instanceof Error ? err.message : String(err)}`);
+      return [];
+    });
+
+    for (const tap of taps) {
+      seen++;
+      console.log(
+        `TAP  update=${tap.updateId}  ${tap.data.action} outreach ${tap.data.outreachId}  ` +
+          `chat=${tap.chatId}${tap.chatId === found.config.chatId ? '' : '  ← NOT the configured chat'}`,
+      );
+    }
+    // Deliberately does not advance the cursor: this is a diagnostic, and consuming a tap
+    // here would hide it from the stage that is supposed to act on it.
+    if (seen > 0) break;
+  }
+
+  console.log(seen === 0 ? '\nno taps seen — the button press is not reaching the bot' : '\nthe read path works');
+  process.exit(0);
 }
