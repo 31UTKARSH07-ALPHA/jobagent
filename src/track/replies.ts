@@ -253,6 +253,9 @@ export function workingDaysSince(at: string, now: Date = new Date()): number {
 }
 
 if (import.meta.main) {
+  // A hand-typed CLI gets the same `.env` the scheduled runs are given.
+  (await import('../env.ts')).loadEnv();
+
   const { parseArgs } = await import('node:util');
   const { openDb, DEFAULT_DB_PATH } = await import('../store/db.ts');
 

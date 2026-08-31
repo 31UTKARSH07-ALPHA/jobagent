@@ -197,12 +197,18 @@ export async function runApprove(ctx: StageContext, deps: ApproveDeps = {}): Pro
       | undefined;
 
     if (row === undefined) {
+      ctx.count('tap_unknown');
+      ctx.log(`tap for outreach ${tap.data.outreachId}, which no longer exists`);
       await answer(config, tap.callbackId, 'That draft is gone.', ctx.signal);
       continue;
     }
 
     // Already decided, or already gone. A second tap must never send a second email.
     if (row.sent_at !== null || row.state !== 'PENDING_APPROVAL') {
+      // Logged rather than silent: a batch reporting "6 taps" and explaining two of them is
+      // how an hour went into diagnosing a system that was working.
+      ctx.count('tap_already_decided');
+      ctx.log(`tap for ${row.company} ignored — already ${row.sent_at === null ? row.state : 'sent'}`);
       await answer(config, tap.callbackId, `Already ${row.sent_at === null ? row.state.toLowerCase() : 'sent'}.`, ctx.signal);
       continue;
     }
@@ -218,6 +224,13 @@ export async function runApprove(ctx: StageContext, deps: ApproveDeps = {}): Pro
       continue;
     }
 
+    // Clear the approval as well as setting the state. Tapping approve and then changing
+    // your mind is legitimate — approving does not change state, precisely so a reject can
+    // still land — but it left row 8 both APPROVED and REJECTED_BY_USER. The send query is
+    // guarded on state so nothing would have gone out, and that is exactly the kind of
+    // safety that should not rest on one clause: any future query keyed on `approved_at`
+    // alone would mail somebody he had said no to.
+    ctx.db.prepare('UPDATE outreach SET approved_at = NULL WHERE id = ?').run(row.id);
     tryTransition(ctx.db, row.job_id, 'PENDING_APPROVAL', 'REJECTED_BY_USER');
     ctx.count('rejected');
     ctx.log(`rejected: ${row.company} → ${row.email}`);
@@ -240,6 +253,9 @@ export async function runApprove(ctx: StageContext, deps: ApproveDeps = {}): Pro
 // question from "did the stage act on it" and needs separating when one of them breaks.
 // ─────────────────────────────────────────────────────────────────────────────
 if (import.meta.main) {
+  // A hand-typed CLI gets the same `.env` the scheduled runs are given.
+  (await import('../env.ts')).loadEnv();
+
   const { parseArgs } = await import('node:util');
   const { values } = parseArgs({
     options: {

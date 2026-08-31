@@ -33,6 +33,7 @@ node src/match/score.ts --job=12       # score one job, print it, write nothing
 node src/match/score.ts --distribution # the histogram the calibration gate reads
 node src/match/score.ts --rescore      # re-score at the current PROMPT_VERSION, no state change
 node src/notify/telegram.ts --test     # prove the bot is wired up
+node src/notify/approve.ts --watch     # did my button tap reach the bot?
 node src/gmail/auth.ts                 # authorise Gmail (opens a browser, once)
 node src/gmail/auth.ts --status        # which account, which scopes
 node src/gmail/messages.ts --query="from:naukri.com" --links --full   # inspect real mail
@@ -62,6 +63,14 @@ node src/schedule/launchd.ts --install # (re)write and load both; --job=hourly n
    recoverable by just running again.
 
 ## Non-obvious facts
+
+- **Hand-run CLIs load `.env` themselves** (`src/env.ts`). Only `scripts/run-daily.sh` passes
+  `--env-file-if-exists`; a command you type does not, and every documented one-off used to
+  fail claiming the bot token was unset. Library code must never call it — a stage takes its
+  configuration from the environment it was given.
+- **The tap cursor is consumed by whichever process polls first** (043). The ten-minute agent
+  usually gets there before you do, which makes a manual `getUpdates` look empty and a working
+  approval loop look broken. `--watch` exists for this and does not advance the cursor.
 
 - **Never ask a model for a 0–100 score.** The scorer rates four factors 0–10 and
   `fitScore()` does the arithmetic. Asked for the number directly, the same posting came

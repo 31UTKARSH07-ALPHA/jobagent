@@ -315,6 +315,9 @@ export async function redraft(
 //   node src/draft/index.ts --redraft        rewrite every unsent draft in place
 // ─────────────────────────────────────────────────────────────────────────────
 if (import.meta.main) {
+  // A hand-typed CLI gets the same `.env` the scheduled runs are given.
+  (await import('../env.ts')).loadEnv();
+
   const { openDb, DEFAULT_DB_PATH } = await import('../store/db.ts');
   const { values } = parseArgs({
     options: {

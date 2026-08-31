@@ -165,6 +165,40 @@ test('a reject is terminal', async () => {
   assert.equal(counts['rejected'], 1);
 });
 
+test('rejecting after approving clears the approval', async () => {
+  // Changing your mind is legitimate, and it left a row that was both APPROVED and
+  // REJECTED_BY_USER. The send query is guarded on state, but that safety should not rest
+  // on a single clause.
+  const db = openDb(':memory:');
+  const { outreachId, jobId } = pending(db);
+
+  await runApprove(context(db).ctx, { config, ...stubs([tap(outreachId, 'approve')]) });
+  await runApprove(context(db).ctx, { config, ...stubs([tap(outreachId, 'reject', { updateId: 2 })]) });
+
+  const row = db.prepare('SELECT approved_at FROM outreach WHERE id = ?').get(outreachId) as {
+    approved_at: string | null;
+  };
+  assert.equal(row.approved_at, null, 'no row is ever both approved and rejected');
+  assert.equal(stateOf(db, jobId), 'REJECTED_BY_USER');
+});
+
+test('every tap is accounted for in the log, including the boring ones', async () => {
+  // A batch reporting "6 taps" and explaining two of them is how an hour went into
+  // diagnosing a system that was working correctly.
+  const db = openDb(':memory:');
+  const { outreachId } = pending(db);
+
+  const { ctx, counts } = context(db);
+  await runApprove(ctx, {
+    config,
+    ...stubs([tap(outreachId, 'reject'), tap(outreachId, 'approve', { updateId: 2 }), tap(9999, 'approve', { updateId: 3 })]),
+  });
+
+  assert.equal(counts['rejected'], 1);
+  assert.equal(counts['tap_already_decided'], 1);
+  assert.equal(counts['tap_unknown'], 1);
+});
+
 test('a tap from another chat cannot approve anything', async () => {
   // The token is a secret, but a leaked one must not be able to send mail in his name.
   const db = openDb(':memory:');

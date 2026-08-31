@@ -268,6 +268,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 }
 
 if (import.meta.main) {
+  // A hand-typed CLI gets the same `.env` the scheduled runs are given.
+  (await import('./env.ts')).loadEnv();
+
   const code = await main();
 
   // An abandoned stage keeps its own timers and sockets alive, so the process would sit

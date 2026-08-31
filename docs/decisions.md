@@ -1722,3 +1722,42 @@ saving the cursor.
 
 **Three asks per run.** A phone full of decisions is a phone put down — the same reasoning as
 the digest's ten-item limit (014).
+
+---
+
+## 043 — Two debugging lessons from a system that was working
+
+**What happened, 2026-09-01.** He tapped Approve, it appeared not to work, and an hour went
+into diagnosing it. The approval loop had been working correctly the entire time: the
+ten-minute agent polled, took **6 taps in one batch**, acted on them, and advanced the
+Telegram cursor — which *confirms* those updates and deletes them from Telegram's queue. Every
+manual poll afterwards ran against an empty queue and looked like a broken read path.
+
+**The diagnosis was wrong because the evidence was missing, not because the code was.** Three
+fixes, all about being able to see what happened:
+
+- **Every tap is now logged, including the boring ones.** A batch reporting "6 taps" and
+  explaining two of them is what made a working system look broken — the other four hit the
+  already-decided and unknown-draft paths and produced no output at all.
+- **The poll logs its offset and count on every run**, at zero as well. A poller that has
+  silently stopped receiving taps looks exactly like a poller with nothing to do.
+- **`node src/notify/approve.ts --watch`** answers "did my press reach the bot" separately
+  from "did the stage act on it". It deliberately does not advance the cursor, so watching
+  cannot itself consume the tap the stage is supposed to handle — which is the same trap in
+  miniature.
+
+**And one real defect it exposed.** Tapping Approve and then Reject left a row that was both
+`approved_at` **and** `REJECTED_BY_USER`. Approving deliberately does not change state, so
+that a later reject can still land — changing your mind is legitimate. But the reject must
+clear the approval too. Nothing would have been sent, because the send query is guarded on
+state; the point is that the safety should not rest on one clause, since any future query
+keyed on `approved_at` alone would mail somebody he had said no to. The live row was repaired.
+
+**Every hand-typed CLI now loads `.env` itself** (`src/env.ts`). The scheduled runs pass
+`--env-file-if-exists=.env`; nothing typed at a prompt did, so every documented one-off failed
+with a message about setup that had already been done. The library code deliberately does not
+call it — a stage must take its configuration from the environment it was given.
+
+**What is still unexplained, and stays that way honestly:** the tap on Canonical never arrived.
+Every other tap that morning did. There is no evidence to say why, and no code change is
+justified by a single unreproduced event.

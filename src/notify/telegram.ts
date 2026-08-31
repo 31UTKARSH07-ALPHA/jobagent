@@ -246,6 +246,9 @@ async function main(argv: string[]): Promise<number> {
 }
 
 if (import.meta.main) {
+  // A hand-typed CLI gets the same `.env` the scheduled runs are given.
+  (await import('../env.ts')).loadEnv();
+
   process.exitCode = await main(process.argv.slice(2));
 }
 
