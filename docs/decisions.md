@@ -1678,3 +1678,47 @@ re-checks every cleared row each run against the current score and confidence.
 That turned the incident into a self-repair: the next run demoted Lakkshions by itself, raised
 it as a fault, and the health check reported it to Telegram the same minute (026). No hand-edit
 — which matters, because the two previous data repairs in this project were both hand-edits.
+
+---
+
+## 042 — Approve/reject by polling, not by a bot framework
+
+**Decision.** `src/notify/approve.ts` shows a draft on Telegram with two buttons, then acts on
+the tap. It runs beside `send` on the ten-minute agent. **No `grammy`, and no daemon.**
+
+**Why not the dependency `CLAUDE.md` had been reserving.** Telegram delivers a tap either by
+webhook — which needs a public HTTPS endpoint this laptop does not have — or by `getUpdates`,
+which is a cursor you poll. A bot framework exists to hold a long poll open in a
+process that never exits, and this project is a set of stages that start, do a thing and stop
+(`docs/architecture.md`). The send agent already runs every ten minutes, so polling the cursor
+there costs one request and a tap is acted on within ten minutes of being made. The cursor
+lives in the new `app_state` table, because state lives in SQLite rather than in a file beside
+it.
+
+**Approval is not a state, it is a column.** `outreach.approved_at` (migration 007). The state
+machine has `PENDING_APPROVAL → SENT`, and approving is not sending — an approved item joins
+the 09:00 queue and leaves at its jittered slot through the *same* code path as an auto-send,
+which is the whole point of decision 007. An `APPROVED` state would mean "waiting, but
+differently" and would fork that path.
+
+The send query therefore reads `state = 'AUTO_SEND' OR (state = 'PENDING_APPROVAL' AND
+approved_at IS NOT NULL)`. **A scheduled slot is not permission**, and there is a test that
+says so.
+
+**The whole email is shown, never a summary.** Approving something you have not read is a
+rubber stamp, which is the opposite of why the queue exists. The address gets its own line
+marked *published on their site* or *guessed*, because "is this the right person" is the other
+half of the decision.
+
+**A tap from any chat but the configured one is refused and raised as a fault.** The bot token
+is a secret, but a leaked one must not be able to send mail in his name. The cursor still
+advances past a refused tap — otherwise one bad update replays forever and blocks every real
+tap behind it.
+
+**Every tap is idempotent.** A second tap on a decided draft is answered with what already
+happened and changes nothing; a tap on a sent or vanished one is handled rather than crashed
+on. Telegram will happily deliver the same update twice if a run dies between acting and
+saving the cursor.
+
+**Three asks per run.** A phone full of decisions is a phone put down — the same reasoning as
+the digest's ten-item limit (014).

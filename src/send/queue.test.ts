@@ -227,6 +227,40 @@ test('a job that no longer qualifies is demoted, not sent', async () => {
   assert.match(faults[0]!, /approval queue/);
 });
 
+test('an approved item goes out through the same path as an auto-send', async () => {
+  const db = openDb(':memory:');
+  const job = drafted(db, { fit: 84, confidence: 'low' });
+  const post = delivering();
+
+  await runSend(context(db).ctx, { now: morning, armed: true, deliver: post.deliver });
+  assert.equal(stateOf(db, job), 'PENDING_APPROVAL');
+
+  // He taps approve. That is permission, not delivery.
+  db.prepare('UPDATE outreach SET approved_at = ?, scheduled_send_at = ?').run(
+    nowIso(),
+    new Date(later.getTime() - 60_000).toISOString(),
+  );
+
+  await runSend(context(db).ctx, { now: later, armed: true, deliver: post.deliver });
+
+  assert.equal(post.calls.length, 1);
+  assert.equal(stateOf(db, job), 'SENT');
+});
+
+test('an unapproved item is never sent, however long it sits', async () => {
+  // A scheduled slot is not permission.
+  const db = openDb(':memory:');
+  const job = drafted(db, { fit: 84, confidence: 'low' });
+  const post = delivering();
+
+  await runSend(context(db).ctx, { now: morning, armed: true, deliver: post.deliver });
+  db.prepare('UPDATE outreach SET scheduled_send_at = ?').run(new Date(later.getTime() - 60_000).toISOString());
+  await runSend(context(db).ctx, { now: later, armed: true, deliver: post.deliver });
+
+  assert.equal(post.calls.length, 0);
+  assert.equal(stateOf(db, job), 'PENDING_APPROVAL');
+});
+
 test('the daily cap holds the rest back rather than dropping them', async () => {
   const db = openDb(':memory:');
   for (let i = 0; i < 5; i++) drafted(db, { fit: 100, confidence: 'high' });

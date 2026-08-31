@@ -105,6 +105,8 @@ export const StageName = z.enum([
   "digest",
   /** The hourly fast lane's instant ping for a strong match. Not part of the daily run. */
   "alert",
+  /** Asks about drafts awaiting a decision, and acts on the taps. Runs beside `send`. */
+  "approve",
   "send",
   "track",
 ]);
@@ -213,6 +215,10 @@ export const Outreach = z.object({
   drafted_at: Timestamp,
   /** When the draft was shown in a digest for review. null = not shown yet. */
   digested_at: Timestamp.nullable(),
+  /** When he tapped Approve. Not a state: an approved item still waits for its slot. */
+  approved_at: Timestamp.nullable(),
+  /** When the bot last asked about this draft, so it does not ask again every ten minutes. */
+  approval_asked_at: Timestamp.nullable(),
   /** 09:00 + jitter. Never the pipeline's own run time. */
   scheduled_send_at: Timestamp.nullable(),
   sent_at: Timestamp.nullable(),

@@ -93,9 +93,10 @@ function due(ctx: StageContext, now: Date): Due[] {
           AND o.gmail_draft_id IS NOT NULL
           AND o.scheduled_send_at IS NOT NULL
           AND o.scheduled_send_at <= ?
-          -- PENDING_APPROVAL is deliberately absent: it needs a tap, and taps are Phase 3's
-          -- Telegram buttons, which do not exist yet. Those rows wait, correctly.
-          AND j.state = 'AUTO_SEND'
+          -- Auto-sends, and approved items -- one code path for both, which is the point of
+          -- decision 007. PENDING_APPROVAL without approved_at is deliberately excluded:
+          -- a scheduled slot is not permission.
+          AND (j.state = 'AUTO_SEND' OR (j.state = 'PENDING_APPROVAL' AND o.approved_at IS NOT NULL))
         ORDER BY o.scheduled_send_at`,
     )
     .all(now.toISOString()) as Due[];
@@ -208,7 +209,7 @@ export async function runSend(ctx: StageContext, deps: SendDeps = {}): Promise<v
         )
         .run(nowIso(), sent.messageId, sent.threadId, row.outreach_id);
 
-      tryTransition(ctx.db, row.job_id, row.state as 'AUTO_SEND', 'SENT');
+      tryTransition(ctx.db, row.job_id, row.state as 'AUTO_SEND' | 'PENDING_APPROVAL', 'SENT');
 
       ctx.count('sent');
       if (sent.recovered) {

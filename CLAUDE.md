@@ -16,8 +16,10 @@ Everything else lives in `docs/` and is read on demand.
 - **`@huggingface/transformers`** — bge-small embeddings, local, free
 - **`@googleapis/gmail`** — Gmail read/draft/send. The per-API package: 1.2MB, versus
   206MB for the umbrella `googleapis`. Same client (decision 015)
-- **Telegram** — plain `fetch` in `src/notify/telegram.ts`; sending is one POST. `grammy`
-  arrives with Phase 3, which needs a long poll for approve/reject taps
+- **Telegram** — plain `fetch` in `src/notify/telegram.ts`, for sending *and* for approve/
+  reject taps. `grammy` was reserved for Phase 3 and turned out not to be needed: a framework
+  holds a long poll open in a daemon, and the ten-minute send agent can just poll the
+  `getUpdates` cursor (decision 042)
 
 ## Commands
 

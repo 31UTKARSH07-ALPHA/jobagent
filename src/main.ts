@@ -25,6 +25,7 @@ import { runDigest } from './notify/digest.ts';
 import { runAlert } from './notify/alert.ts';
 import { runTrack } from './track/replies.ts';
 import { runSend } from './send/queue.ts';
+import { runApprove } from './notify/approve.ts';
 import { reportFaults } from './notify/health.ts';
 
 export type { Stage, StageContext };
@@ -117,6 +118,7 @@ export const STAGES: Record<string, Stage> = {
   draft: { phase: 2, run: runDraft },
   digest: { phase: 1, run: runDigest },
   alert: { phase: 1, run: runAlert },
+  approve: { phase: 3, run: runApprove },
   send: { phase: 3, run: runSend },
   track: { phase: 3, run: runTrack },
 };
@@ -157,7 +159,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   if (values.help) {
     console.log(
       [
-        'usage: node src/main.ts [--stage=<name>] [--fast] [--dry-run] [--db=<path>]',
+        'usage: node src/main.ts [--stage=<name>[,<name>]] [--fast] [--dry-run] [--db=<path>]',
         'fast: the hourly lane — ' + FAST_STAGES.join(' → '),
         `stages: ${Object.keys(STAGES).join(', ')}`,
       ].join('\n'),
@@ -165,18 +167,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     return 0;
   }
 
-  if (values.stage !== undefined && !(values.stage in STAGES)) {
-    console.error(`unknown stage "${values.stage}" — expected one of: ${Object.keys(STAGES).join(', ')}`);
+  // `--stage` takes a list, because the send agent needs `approve` and `send` in one process:
+  // asking and acting on taps are the two halves of one loop and splitting them across agents
+  // would double the launchd surface for no gain.
+  const named = values.stage === undefined ? [] : values.stage.split(',').map((s) => s.trim());
+  const unknown = named.filter((name) => !(name in STAGES));
+  if (unknown.length > 0) {
+    console.error(`unknown stage "${unknown[0]}" — expected one of: ${Object.keys(STAGES).join(', ')}`);
     return 2;
   }
 
   const dryRun = values['dry-run'];
-  const toRun =
-    values.stage !== undefined
-      ? [values.stage]
-      : values.fast
-        ? [...FAST_STAGES]
-        : [...DAILY_STAGES];
+  const toRun = named.length > 0 ? named : values.fast ? [...FAST_STAGES] : [...DAILY_STAGES];
 
   const db = openDb(values.db);
   const runId = startRun(db, dryRun);

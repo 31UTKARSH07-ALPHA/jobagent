@@ -108,7 +108,7 @@ export const SENDER: LaunchdJob = {
   minute: 0,
   intervalSeconds: 600,
   env: { JOBAGENT_LOG: 'send', JOBAGENT_LOCK: 'send' },
-  args: ['--stage=send'],
+  args: ['--stage=approve,send'],
 };
 
 /** Everything `--install` installs. */
@@ -421,7 +421,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
         '  two agents, and both are installed unless --job says otherwise:',
         `    ${DAILY.label}   06:00, the full pipeline`,
         `    ${HOURLY.label}  hourly, ingest → score → alert → track`,
-        `    ${SENDER.label}    every 10 min, the send queue (disarmed unless JOBAGENT_SEND=armed)`,
+        `    ${SENDER.label}    every 10 min, approvals + the send queue (disarmed unless JOBAGENT_SEND=armed)`,
         '',
         '  --install    write the plists into ~/Library/LaunchAgents and load them',
         '  --uninstall  unload and delete them',

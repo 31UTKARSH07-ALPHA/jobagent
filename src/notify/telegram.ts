@@ -248,3 +248,161 @@ async function main(argv: string[]): Promise<number> {
 if (import.meta.main) {
   process.exitCode = await main(process.argv.slice(2));
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inline buttons, and reading the taps
+//
+// Telegram offers two ways to receive a tap: a webhook, which needs a public HTTPS endpoint
+// this laptop does not have, or `getUpdates`, which is a cursor you poll. Polling fits what
+// is already here — the send agent runs every ten minutes anyway, so a tap is acted on within
+// ten minutes of being made, and no long-running daemon and no bot framework is needed
+// (decision 042).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** What a button carries back. Telegram caps this at 64 bytes. */
+export type CallbackData = { action: 'approve' | 'reject'; outreachId: number };
+
+export const encodeCallback = (data: CallbackData): string =>
+  `${data.action === 'approve' ? 'a' : 'r'}:${data.outreachId}`;
+
+export function decodeCallback(raw: string): CallbackData | null {
+  const m = /^([ar]):(\d+)$/.exec(raw.trim());
+  if (m === null) return null;
+  return { action: m[1] === 'a' ? 'approve' : 'reject', outreachId: Number(m[2]) };
+}
+
+/** A message with buttons under it. One row, so the two sit side by side on a phone. */
+export async function sendWithButtons(
+  config: TelegramConfig,
+  text: string,
+  buttons: { label: string; data: CallbackData }[],
+  signal?: AbortSignal,
+): Promise<{ message_id: number }> {
+  const res = await fetch(`${API}/bot${config.token}/sendMessage`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: config.chatId,
+      text,
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+      reply_markup: {
+        inline_keyboard: [buttons.map((b) => ({ text: b.label, callback_data: encodeCallback(b.data) }))],
+      },
+    }),
+    signal: signal === undefined ? AbortSignal.timeout(20_000) : AbortSignal.any([AbortSignal.timeout(20_000), signal]),
+  });
+
+  const payload = (await res.json()) as { ok: boolean; result?: { message_id: number }; description?: string };
+  if (!res.ok || !payload.ok || payload.result === undefined) {
+    throw new TelegramError(res.status, payload.description ?? res.statusText);
+  }
+  return payload.result;
+}
+
+export type Tap = {
+  updateId: number;
+  callbackId: string;
+  data: CallbackData;
+  /** Who tapped. Checked against the configured chat before anything is acted on. */
+  chatId: string;
+  messageId: number | null;
+};
+
+/**
+ * Taps waiting since `offset`.
+ *
+ * Only `callback_query` updates are asked for — this bot has no commands, and narrowing the
+ * `allowed_updates` means an ordinary message to the bot cannot advance the cursor past a tap
+ * that has not been handled.
+ */
+export async function getTaps(
+  config: TelegramConfig,
+  offset: number,
+  signal?: AbortSignal,
+): Promise<Tap[]> {
+  const res = await fetch(`${API}/bot${config.token}/getUpdates`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ offset, timeout: 0, allowed_updates: ['callback_query'] }),
+    signal: signal === undefined ? AbortSignal.timeout(20_000) : AbortSignal.any([AbortSignal.timeout(20_000), signal]),
+  });
+
+  const payload = (await res.json()) as {
+    ok: boolean;
+    description?: string;
+    result?: {
+      update_id: number;
+      callback_query?: {
+        id: string;
+        data?: string;
+        message?: { message_id: number; chat: { id: number | string } };
+      };
+    }[];
+  };
+
+  if (!res.ok || !payload.ok) throw new TelegramError(res.status, payload.description ?? res.statusText);
+
+  return (payload.result ?? []).flatMap((update) => {
+    const query = update.callback_query;
+    const data = query?.data === undefined ? null : decodeCallback(query.data);
+    if (query === undefined || data === null) return [];
+    return [
+      {
+        updateId: update.update_id,
+        callbackId: query.id,
+        data,
+        chatId: String(query.message?.chat.id ?? ''),
+        messageId: query.message?.message_id ?? null,
+      },
+    ];
+  });
+}
+
+/**
+ * Acknowledge a tap so the button stops spinning, and say what happened.
+ *
+ * Never throws: the decision has already been recorded by the time this is called, and
+ * failing to update the phone is not a reason to fail the run or, worse, to retry the
+ * decision.
+ */
+export async function answerTap(
+  config: TelegramConfig,
+  callbackId: string,
+  text: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  try {
+    await fetch(`${API}/bot${config.token}/answerCallbackQuery`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ callback_query_id: callbackId, text }),
+      signal: signal === undefined ? AbortSignal.timeout(10_000) : AbortSignal.any([AbortSignal.timeout(10_000), signal]),
+    });
+  } catch {
+    // Deliberately silent.
+  }
+}
+
+/** Replace a message's buttons with a line of plain text, so a tap cannot be repeated. */
+export async function settleButtons(
+  config: TelegramConfig,
+  messageId: number,
+  note: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  try {
+    await fetch(`${API}/bot${config.token}/editMessageReplyMarkup`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: config.chatId,
+        message_id: messageId,
+        reply_markup: { inline_keyboard: [[{ text: note, callback_data: 'done' }]] },
+      }),
+      signal: signal === undefined ? AbortSignal.timeout(10_000) : AbortSignal.any([AbortSignal.timeout(10_000), signal]),
+    });
+  } catch {
+    // Cosmetic; the database is what decides.
+  }
+}

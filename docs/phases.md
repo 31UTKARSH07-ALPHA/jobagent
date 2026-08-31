@@ -130,9 +130,9 @@ revisit past ~20/day (the item under *Later* assumes volume that does not exist 
 - [x] `src/send/gate.ts` — auto vs approval, daily cap, ramp, suppression (038, 040)
 - [x] `src/send/queue.ts` — jittered 09:00 scheduler, **shipped disarmed** (040)
 - [x] `src/send/deliver.ts` — `drafts.send` with the ambiguous-failure recovery (007)
-- [ ] Telegram approve/reject buttons wired to state transitions — **the last piece.** Needs
-      `grammy`, because approve/reject is a long poll rather than a single POST. Until it
-      exists, `PENDING_APPROVAL` rows correctly wait forever
+- [x] Telegram approve/reject buttons wired to state transitions (042). **No `grammy` after
+      all** — a framework exists to hold a long poll open in a daemon, and this is a set of
+      stages that start and stop. The ten-minute agent polls `getUpdates` instead
 - [x] `src/track/replies.ts` — reply + bounce detection, **built 2026-08-28 ahead of sending**
       because it is what turns silence into information (decision 037). Rides the hourly lane.
       Classifies a wrong address apart from a policy refusal, which is the only spam signal a
