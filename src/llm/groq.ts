@@ -76,11 +76,13 @@ function apiKey(): string {
   return key;
 }
 
+/** Wait this many milliseconds. */
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /** Per-model promise chain, so concurrent callers space themselves out. */
 const modelChain = new Map<string, Promise<void>>();
 
+/** Hold back a request until this model’s minimum gap has passed. */
 function pace(model: string): Promise<void> {
   const prev = modelChain.get(model) ?? Promise.resolve();
   const next = prev.then(() => sleep(MIN_INTERVAL_MS));
@@ -296,14 +298,6 @@ export async function chat(opts: ChatOptions): Promise<string> {
 }
 
 /**
- * A chat completion validated against a Zod schema.
- *
- * The same schema produces the JSON Schema sent to Groq *and* validates what comes back,
- * so there is exactly one definition of the shape. A response that parses as JSON but
- * fails the schema is retried — that is the flakiness described at the top of this file,
- * not a permanent failure.
- */
-/**
  * Zod schema → the JSON Schema Groq's strict mode accepts.
  *
  * Zod emits a `$schema` dialect marker that strict mode rejects, so it is stripped.
@@ -316,6 +310,14 @@ export function toStrictJsonSchema(schema: z.ZodType<unknown>): Record<string, u
   return json;
 }
 
+/**
+ * A chat completion validated against a Zod schema.
+ *
+ * The same schema produces the JSON Schema sent to Groq *and* validates what comes back,
+ * so there is exactly one definition of the shape. A response that parses as JSON but
+ * fails the schema is retried — that is the flakiness described at the top of this file,
+ * not a permanent failure.
+ */
 export async function complete<T>(
   schema: z.ZodType<T>,
   name: string,

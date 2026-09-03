@@ -43,6 +43,7 @@ export async function pdfToText(path: string): Promise<string> {
   return text.replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').trim();
 }
 
+/** Ask the model to turn resume text into the structured profile. */
 export async function extractProfile(resumePath: string): Promise<Profile> {
   const text = await pdfToText(resumePath);
   if (text.length < 200) {
@@ -66,6 +67,7 @@ export async function extractProfile(resumePath: string): Promise<Profile> {
   });
 }
 
+/** Write the profile to disk. */
 export function saveProfile(profile: Profile, path: string = PROFILE_PATH): void {
   mkdirSync(dirname(resolve(path)), { recursive: true });
   writeFileSync(path, JSON.stringify(profile, null, 2) + '\n');
@@ -108,6 +110,7 @@ function summarise(p: Profile): string {
   ].join('\n');
 }
 
+/** CLI entry: read the resume PDF and regenerate data/profile.json. */
 async function main(argv: string[]): Promise<number> {
   const { values } = parseArgs({
     args: argv,

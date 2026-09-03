@@ -85,6 +85,7 @@ const meaningfulLines = (block: string): string[] =>
     .map((l) => l.trim())
     .filter((l) => l !== '' && !/^-{3,}$/.test(l));
 
+/** Pull the job postings out of one LinkedIn alert email. */
 export function parseLinkedInEmail(email: Email): AlertPosting[] {
   const titles = titlesByJobId(email.html);
   const postings: AlertPosting[] = [];

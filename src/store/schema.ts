@@ -16,6 +16,7 @@ export const Timestamp = z.iso.datetime();
 /** SQLite has no boolean type. */
 export const SqlBool = z.union([z.literal(0), z.literal(1)]);
 
+/** The current time as a UTC ISO string — the only format stored. */
 export const nowIso = (): string => new Date().toISOString();
 
 // ─────────────────────────────────────────────────────────────────────────────

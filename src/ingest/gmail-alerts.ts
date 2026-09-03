@@ -56,6 +56,7 @@ export type GmailAlertOptions = {
   query?: string;
 };
 
+/** Build the job source that reads LinkedIn and Naukri alert emails. */
 export function gmailAlertSource(opts: GmailAlertOptions): JobSource {
   return {
     name: 'gmail-alert',

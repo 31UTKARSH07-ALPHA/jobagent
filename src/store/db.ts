@@ -37,6 +37,7 @@ export function openDb(path: string = DEFAULT_DB_PATH): Db {
 
 type Migration = { id: number; name: string; sql: string };
 
+/** Read the .sql migration files in order. */
 function loadMigrations(): Migration[] {
   return readdirSync(MIGRATIONS_DIR)
     .filter((f) => f.endsWith('.sql'))

@@ -169,6 +169,7 @@ export type ContactsDeps = {
   mxValid?: typeof mxValid;
 };
 
+/** The contacts stage: give every matched job an address to write to, or mark it NEEDS_CONTACT. */
 export async function runContacts(ctx: StageContext, deps: ContactsDeps = {}): Promise<void> {
   const find = deps.findContacts ?? findContacts;
   const discover = deps.discoverDomain ?? discoverDomain;

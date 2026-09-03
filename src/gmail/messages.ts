@@ -36,6 +36,7 @@ export type Email = {
   labelIds: string[];
 };
 
+/** Pull one header out of a message, case-insensitively. */
 export const headerValue = (part: gmail_v1.Schema$MessagePart | undefined, name: string): string => {
   const wanted = name.toLowerCase();
   const found = part?.headers?.find((h) => (h.name ?? '').toLowerCase() === wanted);
@@ -54,6 +55,7 @@ export function walkParts(part: gmail_v1.Schema$MessagePart | undefined): gmail_
   return [part, ...(part.parts ?? []).flatMap(walkParts)];
 }
 
+/** Turn Gmail’s base64url body data back into text. */
 export const decodeBody = (data: string | null | undefined): string =>
   data ? Buffer.from(data, 'base64url').toString('utf8') : '';
 
@@ -90,6 +92,7 @@ export function bodyOf(payload: gmail_v1.Schema$MessagePart | undefined): {
   return { text: rendered.length > plain.trim().length ? rendered : plain, html };
 }
 
+/** Flatten Gmail’s nested message shape into the four fields the parsers want. */
 export function toEmail(message: gmail_v1.Schema$Message): Email {
   const { text, html } = bodyOf(message.payload);
   const from = headerValue(message.payload, 'from');
@@ -192,6 +195,7 @@ export async function* searchIds(
   } while (pageToken !== undefined);
 }
 
+/** Fetch one message by id and flatten it. */
 export async function getEmail(
   gmail: gmail_v1.Gmail,
   id: string,
@@ -225,6 +229,7 @@ export async function* searchEmails(
 // CLI — how the alert parsers get written against reality
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** CLI entry: search the real mailbox, for writing parsers against actual mail. */
 async function main(argv: string[]): Promise<number> {
   const { parseArgs } = await import('node:util');
   const { values } = parseArgs({

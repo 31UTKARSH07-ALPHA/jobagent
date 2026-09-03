@@ -57,6 +57,7 @@ type ProbeOutcome =
   | { kind: 'absent' } // 404, or a board with no open postings
   | { kind: 'error'; message: string };
 
+/** Ask one ATS whether this slug is a real board with jobs on it. */
 async function probe(ats: BoardAts, slug: string): Promise<ProbeOutcome> {
   const adapter = ADAPTERS[ats];
   try {
@@ -96,6 +97,7 @@ async function findBoard(c: Candidate): Promise<BoardSearch> {
   return { best: null, errors };
 }
 
+/** CLI entry: re-verify every candidate board and rewrite data/companies.json. */
 async function main(argv: string[]): Promise<number> {
   const { values } = parseArgs({
     args: argv,

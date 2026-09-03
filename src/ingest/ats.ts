@@ -42,12 +42,14 @@ export type BoardAdapter = {
   parse: (payload: unknown) => BoardPosting[];
 };
 
+/** Whatever date shape a board sent, as a UTC ISO string — or null if it is not a date. */
 const toIso = (value: string | number | null | undefined): string | null => {
   if (value === null || value === undefined || value === '') return null;
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 };
 
+/** Join the location fields a board provides into one string, without repeats. */
 const joinLocations = (...parts: (string | null | undefined)[]): string =>
   [...new Set(parts.filter((p): p is string => typeof p === 'string' && p.trim() !== ''))]
     .join(', ')

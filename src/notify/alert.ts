@@ -44,6 +44,7 @@ export type AlertDeps = {
   config?: TelegramConfig;
 };
 
+/** The alert stage: ping Telegram immediately about a strong match. */
 export async function runAlert(ctx: StageContext, deps: AlertDeps = {}): Promise<void> {
   const strong = pendingDigestItems(ctx.db, MAX_ALERTS_PER_RUN, ALERT_THRESHOLD);
 

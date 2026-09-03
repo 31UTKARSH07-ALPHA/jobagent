@@ -58,6 +58,7 @@ export function previousFaults(db: Db, runId: number): RunErrorType[] {
   return parsed.success ? parsed.data : [];
 }
 
+/** Write the “something is broken” Telegram message. */
 export function formatFaults(faults: RunErrorType[]): string {
   const lines = [
     `⚠️ <b>jobagent needs attention</b> — ${faults.length} new problem${faults.length === 1 ? '' : 's'}`,

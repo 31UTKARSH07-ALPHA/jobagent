@@ -22,6 +22,7 @@ export type Candidate = {
   slugs?: string[];
 };
 
+/** Declare a candidate company that hires in India. */
 const india = (name: string, domain: string, slugs?: string[]): Candidate => ({
   name,
   domain,
@@ -29,6 +30,7 @@ const india = (name: string, domain: string, slugs?: string[]): Candidate => ({
   ...(slugs ? { slugs } : {}),
 });
 
+/** Declare a candidate company that hires remotely worldwide. */
 const remote = (name: string, domain: string, slugs?: string[]): Candidate => ({
   name,
   domain,

@@ -26,6 +26,7 @@ const NAMED_ENTITIES: Record<string, string> = {
   middot: '·',
 };
 
+/** Turn &amp; and friends back into the characters they stand for. */
 export function decodeEntities(input: string): string {
   return input.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (match, body: string) => {
     if (body.startsWith('#')) {

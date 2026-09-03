@@ -74,6 +74,7 @@ export function upsertCompany(db: Db, input: CompanyUpsert): number {
   return row.id;
 }
 
+/** Find a company by its domain. */
 export function companyIdByDomain(db: Db, domain: string): number | null {
   const row = db.prepare('SELECT id FROM companies WHERE domain = ?').get(normaliseDomain(domain)) as
     | { id: number }

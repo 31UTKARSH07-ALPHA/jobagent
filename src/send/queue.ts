@@ -111,6 +111,7 @@ export type SendDeps = {
   armed?: boolean;
 };
 
+/** The send stage: gate what is drafted, schedule it, and deliver what is due. */
 export async function runSend(ctx: StageContext, deps: SendDeps = {}): Promise<void> {
   const now = deps.now ?? new Date();
   const armed = deps.armed ?? sendingArmed();

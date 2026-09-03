@@ -30,6 +30,7 @@ import { reportFaults } from './notify/health.ts';
 
 export type { Stage, StageContext };
 
+/** A stage that is not built yet: it logs and does nothing. */
 const notYet = (phase: 1 | 2 | 3, what: string): Stage => ({
   phase,
   run: async (ctx) => ctx.log(`not implemented yet — ${what} (phase ${phase})`),
@@ -123,6 +124,7 @@ export const STAGES: Record<string, Stage> = {
   track: { phase: 3, run: runTrack },
 };
 
+/** Open a row in `runs` for this execution and return its id. */
 function startRun(db: Db, dryRun: boolean): number {
   const { lastInsertRowid } = db
     .prepare('INSERT INTO runs (started_at, dry_run) VALUES (?, ?)')
@@ -130,6 +132,7 @@ function startRun(db: Db, dryRun: boolean): number {
   return Number(lastInsertRowid);
 }
 
+/** Close that row with the stats and errors the run produced. */
 function finishRun(
   db: Db,
   runId: number,
@@ -144,6 +147,7 @@ function finishRun(
   );
 }
 
+/** CLI entry: run the pipeline, or one stage of it. */
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   const { values } = parseArgs({
     args: argv,

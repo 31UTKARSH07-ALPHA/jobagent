@@ -33,7 +33,7 @@ import type { StageContext } from '../stage.ts';
  * kept, so the two distributions can be compared before thresholds are touched
  * (decision 008). Never edit the prompt without bumping it.
  */
-export const PROMPT_VERSION = 4;
+export const PROMPT_VERSION = 5;
 
 /**
  * `fit_score >= MATCH_THRESHOLD` → MATCHED, below → REJECTED (terminal).
@@ -201,6 +201,7 @@ export const MIN_DESCRIPTION_CHARS = 200;
 export const EVIDENCE_PENALTY = 0.85;
 export const TITLE_ONLY_CEILING = 84;
 
+/** Did this posting arrive with no description worth reading? */
 export const isTitleOnly = (job: Pick<Job, 'description'>): boolean =>
   job.description.trim().length < MIN_DESCRIPTION_CHARS;
 
@@ -302,6 +303,7 @@ export const stateForScore = (score: number): Extract<JobState, 'MATCHED' | 'REJ
 
 type JobWithCompany = Job & { company_name: string };
 
+/** The unscored jobs waiting, with their company names attached. */
 function discoveredJobs(ctx: StageContext, limit: number): JobWithCompany[] {
   const ids = jobIdsInState(ctx.db, 'DISCOVERED', limit);
   return ids.flatMap((id) => {
@@ -321,6 +323,7 @@ export type ScoreDeps = {
   profilePath?: string;
 };
 
+/** The score stage: rate each new posting against the resume and keep or reject it. */
 export async function runScore(ctx: StageContext, deps: ScoreDeps = {}): Promise<void> {
   let profile: Profile;
   try {
@@ -393,6 +396,7 @@ export async function runScore(ctx: StageContext, deps: ScoreDeps = {}): Promise
 // CLI — prompt iteration and the calibration gate
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Print the score histogram the threshold is calibrated against. */
 function printDistribution(dbPath: string): number {
   const db = openDb(dbPath);
   const dist = scoreDistribution(db, PROMPT_VERSION);
@@ -499,6 +503,7 @@ async function rescore(dbPath: string, limit: number): Promise<number> {
   return printDistribution(dbPath);
 }
 
+/** Score a single job and print it, without writing anything. */
 async function scoreOne(dbPath: string, jobId: number): Promise<number> {
   const db = openDb(dbPath);
   const job = getJob(db, jobId);
@@ -527,6 +532,7 @@ async function scoreOne(dbPath: string, jobId: number): Promise<number> {
   return 0;
 }
 
+/** CLI entry: score one job, show the distribution, or re-score at the current rubric. */
 async function main(argv: string[]): Promise<number> {
   const { values } = parseArgs({
     args: argv,

@@ -108,6 +108,7 @@ export const estimateTokens = (text: string): number => Math.ceil(text.length / 
 /** One window per model: the free tier's limits are per-model, not per-account. */
 const windows = new Map<string, TokenWindow>();
 
+/** The shared token budget for this model, created on first use. */
 export function windowFor(model: string, limit: number): TokenWindow {
   const existing = windows.get(model);
   if (existing !== undefined && existing.limit === limit) return existing;

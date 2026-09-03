@@ -56,6 +56,7 @@ export function sources(db: Db): JobSource[] {
   return [gmailAlertSource({ db }), ...atsSources(loadCompanies())];
 }
 
+/** The ingest stage: ask every source for new postings and store them. */
 export async function runIngest(ctx: StageContext): Promise<void> {
   let companies: SeedCompany[] = [];
   try {

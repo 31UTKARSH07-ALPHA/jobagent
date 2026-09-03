@@ -129,14 +129,17 @@ export const scheduleOf = (job: LaunchdJob): string =>
 export const logPathOf = (job: LaunchdJob): string =>
   join(ROOT, 'logs', `${job.env?.['JOBAGENT_LOG'] ?? 'daily'}.log`);
 
+/** Where this agent’s plist file lives. */
 export function plistPath(label: string): string {
   return join(homedir(), 'Library', 'LaunchAgents', `${label}.plist`);
 }
 
+/** The launchd domain for the current user. */
 function domain(): string {
   return `gui/${process.getuid?.() ?? 501}`;
 }
 
+/** Escape a string so it is safe inside XML. */
 const esc = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -166,6 +169,7 @@ export function resolveNode(
   return { path: execPath, stable: false };
 }
 
+/** Generate the plist for one agent — never committed, always regenerated. */
 export function buildPlist(
   job: LaunchdJob,
   opts: { root?: string; node?: string; home?: string } = {},
@@ -245,6 +249,7 @@ export function buildPlist(
 `;
 }
 
+/** Run a launchctl command and capture what it said. */
 function launchctl(args: string[]): { ok: boolean; out: string } {
   try {
     return { ok: true, out: execFileSync('launchctl', args, { encoding: 'utf8', stdio: 'pipe' }) };
@@ -254,10 +259,12 @@ function launchctl(args: string[]): { ok: boolean; out: string } {
   }
 }
 
+/** Is this agent currently loaded into launchd? */
 function isLoaded(label: string): boolean {
   return launchctl(['print', `${domain()}/${label}`]).ok;
 }
 
+/** Write the plist and load the agent. */
 function install(job: LaunchdJob): number {
   const script = join(ROOT, job.script);
   if (!existsSync(script)) {
@@ -310,6 +317,7 @@ function install(job: LaunchdJob): number {
   return 0;
 }
 
+/** Unload the agent and delete its plist. */
 function uninstall(job: LaunchdJob): number {
   const path = plistPath(job.label);
   const loaded = isLoaded(job.label);
@@ -327,6 +335,7 @@ function uninstall(job: LaunchdJob): number {
   return 0;
 }
 
+/** Print whether an agent is loaded, when it next runs, and how the last run exited. */
 function status(job: LaunchdJob): number {
   const path = plistPath(job.label);
   console.log(`plist   ${existsSync(path) ? path : `${path} (absent)`}`);
@@ -350,6 +359,7 @@ function status(job: LaunchdJob): number {
   return 0;
 }
 
+/** Run an agent now, through launchd, exactly as the schedule would. */
 function kickstart(job: LaunchdJob): number {
   if (!isLoaded(job.label)) {
     console.error(`${job.label} is not loaded — run --install first`);
@@ -367,6 +377,7 @@ function kickstart(job: LaunchdJob): number {
   return 0;
 }
 
+/** CLI entry: install, remove, inspect or trigger the scheduled agents. */
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   const { values } = parseArgs({
     args: argv,

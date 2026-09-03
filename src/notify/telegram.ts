@@ -103,10 +103,13 @@ export const SEND_ATTEMPTS = 4;
  * attempts without sleeping 42 seconds to do it.
  */
 const BACKOFF_BASE_MS = Number(process.env['TELEGRAM_BACKOFF_MS'] ?? 2_000);
+/** How long to wait before retry number n. */
 const backoffMs = (attempt: number): number => BACKOFF_BASE_MS * 4 ** (attempt - 1);
 
+/** Wait this many milliseconds. */
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+/** Send one message part, retrying a flaky network but not a bad request. */
 async function sendPart(
   config: TelegramConfig,
   part: string,
@@ -167,6 +170,7 @@ async function sendPart(
   throw last instanceof Error ? last : new Error(`telegram send failed: ${String(last)}`);
 }
 
+/** Send a message, split into parts if it is too long for Telegram. */
 export async function sendMessage(
   config: TelegramConfig,
   text: string,
@@ -221,6 +225,7 @@ async function printChatId(token: string): Promise<number> {
   return 0;
 }
 
+/** CLI entry: find your chat id, or send a test message. */
 async function main(argv: string[]): Promise<number> {
   const token = process.env['TELEGRAM_BOT_TOKEN'] ?? '';
   if (token === '') {
@@ -265,9 +270,11 @@ if (import.meta.main) {
 /** What a button carries back. Telegram caps this at 64 bytes. */
 export type CallbackData = { action: 'approve' | 'reject'; outreachId: number };
 
+/** Pack a button’s meaning into the 64 bytes Telegram allows. */
 export const encodeCallback = (data: CallbackData): string =>
   `${data.action === 'approve' ? 'a' : 'r'}:${data.outreachId}`;
 
+/** Unpack it again, returning null for anything unexpected. */
 export function decodeCallback(raw: string): CallbackData | null {
   const m = /^([ar]):(\d+)$/.exec(raw.trim());
   if (m === null) return null;

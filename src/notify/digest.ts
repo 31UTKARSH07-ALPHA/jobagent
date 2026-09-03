@@ -141,6 +141,7 @@ export type DigestDeps = {
   config?: TelegramConfig;
 };
 
+/** The digest stage: send the morning message and mark what it reported. */
 export async function runDigest(ctx: StageContext, deps: DigestDeps = {}): Promise<void> {
   let config = deps.config;
   if (config === undefined) {

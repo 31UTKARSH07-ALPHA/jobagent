@@ -106,6 +106,7 @@ export function upsertJob(db: Db, companyId: number, raw: RawJob): UpsertResult 
   return { id: Number(lastInsertRowid), created: true };
 }
 
+/** One job by id, or null. */
 export function getJob(db: Db, id: number): Job | null {
   return (db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as Job | undefined) ?? null;
 }

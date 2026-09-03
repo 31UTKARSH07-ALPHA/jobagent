@@ -135,6 +135,7 @@ export type DraftDeps = {
   profilePath?: string;
 };
 
+/** The draft stage: write today’s allowance of emails into Gmail as drafts. */
 export async function runDraft(ctx: StageContext, deps: DraftDeps = {}): Promise<void> {
   let profile: Profile;
   try {

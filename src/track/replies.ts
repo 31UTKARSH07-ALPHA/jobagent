@@ -95,6 +95,7 @@ type Tracked = {
   sent_at: string;
 };
 
+/** Sent messages still waiting on a reply or a bounce. */
 export function trackable(ctx: StageContext): Tracked[] {
   return ctx.db
     .prepare(
@@ -191,6 +192,7 @@ export type TrackDeps = {
 /** How far back to read. Wider than any follow-up window, and bounded so it stays cheap. */
 const LOOKBACK_DAYS = 30;
 
+/** The track stage: notice replies, bounces, and drafts sent by hand. */
 export async function runTrack(ctx: StageContext, deps: TrackDeps = {}): Promise<void> {
   // Before asking what happened to what we sent, find out what left without us.
   const client = deps.client;

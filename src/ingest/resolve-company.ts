@@ -23,6 +23,7 @@ import type { Db } from '../store/db.ts';
 /** RFC 2606 reserved TLD: guaranteed never to resolve. */
 export const UNKNOWN_DOMAIN_SUFFIX = '.unknown.invalid';
 
+/** Is this one of our “we do not know the domain” markers? */
 export const isUnknownDomain = (domain: string): boolean => domain.endsWith(UNKNOWN_DOMAIN_SUFFIX);
 
 /**

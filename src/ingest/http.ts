@@ -42,6 +42,7 @@ export type GetOptions = {
 /** Kept as the old name so existing callers read unchanged. */
 export type GetJsonOptions = GetOptions;
 
+/** Wait this many milliseconds. */
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /** Retryable = transient. A 404 is a permanent answer, a 503 is not. */
@@ -87,6 +88,7 @@ const HOST_MIN_INTERVAL_MS: Record<string, number> = {
 /** Per-host promise chain, so concurrent callers still queue behind each other. */
 const hostChain = new Map<string, Promise<void>>();
 
+/** Hold back a request until this host’s minimum gap has passed. */
 function pace(host: string): Promise<void> {
   const interval = HOST_MIN_INTERVAL_MS[host];
   if (interval === undefined) return Promise.resolve();

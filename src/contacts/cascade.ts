@@ -410,6 +410,7 @@ export async function findContacts(
   return sorted(found);
 }
 
+/** Best-ranked candidate first. */
 const sorted = (candidates: ContactCandidate[]): ContactCandidate[] =>
   [...candidates].sort((a, b) => b.rank - a.rank);
 

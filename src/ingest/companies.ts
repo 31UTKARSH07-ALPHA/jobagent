@@ -44,5 +44,6 @@ export function loadCompanies(path: string = SEED_PATH): SeedCompany[] {
   return CompanySeed.parse(raw).companies;
 }
 
+/** Just the companies whose board is on this ATS. */
 export const companiesByAts = (companies: readonly SeedCompany[], ats: BoardAts): SeedCompany[] =>
   companies.filter((c) => c.ats === ats);

@@ -63,6 +63,7 @@ const StoredToken = z.object({
 });
 export type StoredToken = z.infer<typeof StoredToken>;
 
+/** Read the client id and secret out of the Google credentials download. */
 export function readCredentials(
   path = CREDENTIALS_PATH,
 ): z.infer<typeof Credentials>["installed"] {
@@ -94,6 +95,7 @@ export function readCredentials(
   return parsed.data.installed;
 }
 
+/** Has Gmail been authorised on this machine yet? */
 export function hasToken(path = TOKEN_PATH): boolean {
   try {
     StoredToken.parse(JSON.parse(readFileSync(path, "utf8")));
@@ -103,6 +105,7 @@ export function hasToken(path = TOKEN_PATH): boolean {
   }
 }
 
+/** Load the stored refresh token from disk. */
 function readToken(path = TOKEN_PATH): StoredToken {
   try {
     return StoredToken.parse(JSON.parse(readFileSync(path, "utf8")));
@@ -193,6 +196,7 @@ function openBrowser(url: string): void {
   }
 }
 
+/** The little HTML page the browser lands on after consent, so the tab says something useful. */
 const PAGE = (title: string, detail: string): string =>
   `<!doctype html><meta charset="utf-8"><title>jobagent</title>` +
   `<body style="font:16px system-ui;padding:3rem;max-width:32rem">` +
@@ -324,6 +328,7 @@ export async function authorize(): Promise<{ email: string | null }> {
 // CLI
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Print which account is connected, which scopes it has, and whether the token still works. */
 async function status(): Promise<number> {
   if (!hasToken()) {
     console.log(`no token at ${TOKEN_PATH} — run: node src/gmail/auth.ts`);
@@ -357,6 +362,7 @@ async function status(): Promise<number> {
   }
 }
 
+/** CLI entry: authorise Gmail, or report on the existing authorisation. */
 async function main(argv: string[]): Promise<number> {
   if (argv.includes("--status")) return status();
 

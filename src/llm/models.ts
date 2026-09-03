@@ -78,4 +78,5 @@ export const MODELS: Record<LlmJob, ModelChoice> = {
   },
 };
 
+/** Which model does this job. */
 export const modelFor = (job: LlmJob): ModelChoice => MODELS[job];

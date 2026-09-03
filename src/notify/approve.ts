@@ -33,6 +33,7 @@ export const MAX_ASKS_PER_RUN = 3;
 
 const OFFSET_KEY = 'telegram_update_offset';
 
+/** Where we got to in Telegram’s update cursor. */
 export function readOffset(ctx: StageContext): number {
   const row = ctx.db.prepare('SELECT value FROM app_state WHERE key = ?').get(OFFSET_KEY) as
     | { value: string }
@@ -40,6 +41,7 @@ export function readOffset(ctx: StageContext): number {
   return row === undefined ? 0 : Number(row.value);
 }
 
+/** Remember where we got to, so taps are not replayed. */
 export function writeOffset(ctx: StageContext, offset: number): void {
   ctx.db
     .prepare(
@@ -107,6 +109,7 @@ export type ApproveDeps = {
   settle?: typeof settleButtons;
 };
 
+/** The approve stage: show drafts awaiting a decision, and act on the taps. */
 export async function runApprove(ctx: StageContext, deps: ApproveDeps = {}): Promise<void> {
   let config = deps.config;
   if (config === undefined) {

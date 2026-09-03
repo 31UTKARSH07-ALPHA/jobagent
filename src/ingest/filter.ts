@@ -51,8 +51,10 @@ export const NON_ENGINEERING_TITLE =
  */
 export const UNPAID_TITLE = /\b(un[\s-]?paid|non[\s-]?paid|without stipend|no stipend)\b/i;
 
+/** Does this title advertise an unpaid role? */
 export const isUnpaid = (title: string): boolean => UNPAID_TITLE.test(title);
 
+/** Is this a technical role a student could actually take? */
 export function isEarlyCareerTechRole(title: string): boolean {
   if (!TECHNICAL_TITLE.test(title)) return false;
   if (NON_ENGINEERING_TITLE.test(title)) return false;

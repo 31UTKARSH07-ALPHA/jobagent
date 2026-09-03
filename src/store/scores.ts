@@ -17,6 +17,7 @@ export function hasScore(db: Db, jobId: number, promptVersion: number): boolean 
   return row !== undefined;
 }
 
+/** This job’s score under one specific rubric version. */
 export function getScore(db: Db, jobId: number, promptVersion: number): JobScore | null {
   const row = db
     .prepare('SELECT * FROM job_scores WHERE job_id = ? AND prompt_version = ?')

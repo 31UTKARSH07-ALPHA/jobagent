@@ -67,8 +67,10 @@ export class IllegalTransitionError extends Error {
   }
 }
 
+/** Is this a state a job can never leave? */
 export const isTerminal = (state: JobState): boolean => TRANSITIONS[state].length === 0;
 
+/** Is this move between states allowed? */
 export const canTransition = (from: JobState, to: JobState): boolean =>
   TRANSITIONS[from].includes(to);
 
