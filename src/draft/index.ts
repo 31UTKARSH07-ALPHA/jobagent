@@ -16,10 +16,11 @@ import { parseArgs } from 'node:util';
 import type { StageContext } from '../stage.ts';
 import { getJob } from '../store/jobs.ts';
 import { CURRENT_FIT_SCORE, latestScore } from '../store/scores.ts';
+import { MATCH_THRESHOLD } from '../match/score.ts';
 import { nowIso, type Job, type JobScore, type Profile } from '../store/schema.ts';
 import { loadProfile } from '../match/profile.ts';
 import { groqDrafter, type Drafter, type DraftResult } from './compose.ts';
-import { dailyCap, firstSentAt, SUPPRESSED_BY_SIBLING } from '../send/gate.ts';
+import { dailyCap, sendingDays, SUPPRESSED_BY_SIBLING } from '../send/gate.ts';
 import {
   createGmailDraft,
   updateGmailDraft,
@@ -75,7 +76,7 @@ type Draftable = {
 export function draftableJobs(ctx: StageContext, limit?: number): Draftable[] {
   // Draft exactly what may be sent. At 3/day in week one, drafting eight would queue five a
   // day he cannot send and would have to scroll past (decision 038).
-  const cap = Math.min(limit ?? dailyCap(firstSentAt(ctx.db)), MAX_DRAFTS_PER_RUN);
+  const cap = Math.min(limit ?? dailyCap(sendingDays(ctx.db)), MAX_DRAFTS_PER_RUN);
   const rows = ctx.db
     .prepare(
       // A name is only ever used to greet somebody when the *posting* named them. Every
@@ -90,6 +91,13 @@ export function draftableJobs(ctx: StageContext, limit?: number): Draftable[] {
           AND k.mx_valid = 1
           AND k.confidence IN (${DRAFTABLE_CONFIDENCE.map(() => '?').join(', ')})
           AND NOT EXISTS (SELECT 1 FROM outreach o WHERE o.job_id = j.id)
+          -- The newest score has to still agree this is a match. MATCHED was set by whichever
+          -- rubric was current at the time and there is no edge back out of it, so a rubric
+          -- change leaves jobs sitting in a live state that the current rubric rejects. The
+          -- digest has guarded against this since decision 027; drafting never did, and
+          -- drafting is the one that produces an email. Found by the v5 re-score, which left
+          -- six DRAFTED jobs scoring 47–65 against a threshold of 70 (decision 045).
+          AND ${CURRENT_FIT_SCORE} >= ?
           -- One live conversation per company: a second role where we have already written
           -- is skipped, not queued (decision 038). Ordering by score means the role that
           -- survives is the better one.
@@ -99,7 +107,7 @@ export function draftableJobs(ctx: StageContext, limit?: number): Draftable[] {
                  j.first_seen_at DESC
         LIMIT ?`,
     )
-    .all(...DRAFTABLE_CONFIDENCE, cap) as {
+    .all(...DRAFTABLE_CONFIDENCE, MATCH_THRESHOLD, cap) as {
     job_id: number;
     company_id: number;
     company: string;

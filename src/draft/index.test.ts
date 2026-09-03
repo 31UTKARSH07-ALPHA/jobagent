@@ -160,6 +160,21 @@ test('a guessed address is not drafted while the policy is trusted-only', () => 
   assert.deepEqual(draftableJobs(context(db).ctx), []);
 });
 
+test('a job the current rubric would reject is not drafted', () => {
+  // A rubric change leaves jobs in a live state that the new scores reject, and there is no
+  // edge back out of MATCHED. The v5 re-score left six DRAFTED jobs scoring 47-65 against a
+  // threshold of 70 — and drafting them means emailing about them.
+  const db = openDb(':memory:');
+  const job = ready(db, { fit: 90 });
+  db.prepare(
+    `INSERT INTO job_scores (job_id, prompt_version, fit_score, level_fit, location_fit,
+                             stack_fit, domain_fit, reasoning, hook, model, scored_at)
+     VALUES (?, 5, 47, 3, 10, 3, 3, 'the tighter rubric disagrees', 'hook', 'test', ?)`,
+  ).run(job, nowIso());
+
+  assert.deepEqual(draftableJobs(context(db).ctx), []);
+});
+
 test('a contact whose domain failed the MX check is not written to', () => {
   const db = openDb(':memory:');
   ready(db);

@@ -21,7 +21,25 @@ import type { JobState } from '../store/schema.ts';
  */
 export const RAMP: readonly number[] = [3, 5, 8];
 
-/** When the first email ever left, or null if none has. */
+/**
+ * Days on which at least one email actually left.
+ *
+ * **Not calendar weeks since the first send**, which is what this used to measure and which
+ * the real data broke immediately: one email was sent by hand on 2026-08-27, and seven days
+ * later the ramp declared week two and offered 5/day — after a grand total of *one* email.
+ * Going from one to five is the exact spike the ramp exists to prevent (decision 045).
+ *
+ * Counting days that had sending in them means a week off does not promote you, and the
+ * phrase "3/day for week one" keeps its plain meaning: seven days of sending at three.
+ */
+export function sendingDays(db: Db): number {
+  const row = db
+    .prepare("SELECT COUNT(DISTINCT date(sent_at)) AS n FROM outreach WHERE sent_at IS NOT NULL")
+    .get() as { n: number };
+  return row.n;
+}
+
+/** When the first email ever left, or null if none has. Kept for the ledger, not the ramp. */
 export function firstSentAt(db: Db): string | null {
   const row = db.prepare('SELECT MIN(sent_at) AS at FROM outreach WHERE sent_at IS NOT NULL').get() as
     | { at: string | null }
@@ -29,11 +47,13 @@ export function firstSentAt(db: Db): string | null {
   return row?.at ?? null;
 }
 
-/** How many may go out today. Nothing sent yet means week one, which is three. */
-export function dailyCap(first: string | null, now: Date = new Date()): number {
-  if (first === null) return RAMP[0]!;
-  const weeks = Math.floor((now.getTime() - Date.parse(first)) / (7 * 86_400_000));
-  return RAMP[Math.min(Math.max(weeks, 0), RAMP.length - 1)]!;
+/** Days of sending that make up one step of the ramp. */
+export const DAYS_PER_STEP = 7;
+
+/** How many may go out today. Nothing sent yet means step one, which is three. */
+export function dailyCap(daysSent: number): number {
+  const step = Math.floor(Math.max(daysSent, 0) / DAYS_PER_STEP);
+  return RAMP[Math.min(step, RAMP.length - 1)]!;
 }
 
 /**
@@ -124,5 +144,5 @@ export function sentToday(db: Db, now: Date = new Date()): number {
 
 /** What is left of today's allowance. Never negative. */
 export function remainingToday(db: Db, now: Date = new Date()): number {
-  return Math.max(0, dailyCap(firstSentAt(db), now) - sentToday(db, now));
+  return Math.max(0, dailyCap(sendingDays(db)) - sentToday(db, now));
 }

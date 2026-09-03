@@ -1807,3 +1807,37 @@ never have been matched to the outreach row.
 otherwise and would have thrown on the first terminal-state job it met. A terminal state is not
 a race; it has to be asked about with `canTransition` first. The honest record for that row is
 kept as it is: the mail went, and he rejected it afterwards.
+
+---
+
+## 045 — What a half-finished re-score exposed
+
+The v5 re-score stopped 70 jobs in, and everything below was found because of it.
+
+**Groq has a daily token limit, and nothing here knew.** `429 … tokens per day (TPD): Limit
+200000`. Decision 013 measured the per-minute ceiling (8,000 TPM) and `rate-limit.ts` paces
+against it correctly — but a full re-score is 139 jobs at ~2.2k tokens, about **300k**, and was
+never going to fit in one day. Normal operation is nowhere near it (~5–30 new jobs a morning),
+so this only bites on a rubric bump. **Plan a re-score as two days, or as two halves with
+`--limit`.** `--rescore` is resumable by construction: it only scores jobs missing a row at the
+current version, so re-running it continues where it stopped.
+
+**Drafting never re-checked the score, and the digest always did.** `MATCHED` is set by
+whichever rubric was current at the time and there is no edge back out of it, so a rubric
+change leaves jobs in a live state that the new scores reject. The digest has guarded against
+this since decision 027; the draft stage filtered on state alone. Half-re-scored, six `DRAFTED`
+jobs were sitting at 47–65 against a threshold of 70 — including "G - Trainee engineer" at 47,
+the exact band 024 calibrated the threshold to exclude — and the stage would have written
+emails about every one of them. **The more consequential stage had the weaker guard.**
+
+**The ramp was measuring the calendar, not sending.** `dailyCap` took weeks since the first
+send. He sent one email by hand on 2026-08-27 (decision 044); seven days later the ramp
+declared step two and offered **5 a day after exactly one email had ever been sent**. Going
+from one to five is precisely the volume spike the ramp exists to prevent (invariant 5). It now
+counts **days on which at least one email actually left**, so a week off cannot promote a
+sender, and "3/day for week one" keeps its plain meaning: seven days of sending at three.
+
+The general shape, and it is the same one as 041: **a number that reads correctly in the
+common case can be quietly wrong in the case that matters.** Max-across-versions equals
+newest-version until a rubric tightens. Calendar weeks equal sending weeks until somebody sends
+one email and stops.
