@@ -89,9 +89,11 @@ node src/schedule/launchd.ts --install # (re)write and load both; --job=hourly n
 - Groq charges `prompt + max_tokens` at submission against an 8,000/min budget, so pacing is
   a token window (`src/llm/rate-limit.ts`), not a timer. Never raise `max_tokens` for
   "headroom" — it is billed whether used or not (decisions 013, 017).
-- **There is also a 200,000 tokens/*day* ceiling**, which the pacer does not model. A daily run
-  is nowhere near it; a full re-score (~139 jobs ≈ 300k) does not fit in one day. Split it, or
-  expect to resume — `--rescore` continues where it stopped (decision 045).
+- **There is also a 200,000 tokens/*day* ceiling**, which the pacer does not model — about 85
+  scoring calls a day for *everything*. A morning is nowhere near it; a full re-score is ~140
+  calls and does not fit. Run flat out it eats the budget the 06:00 run needs, so cap it:
+  `--rescore --limit=40` leaves ~100k for the pipeline. A partial re-score is a safe state —
+  every reader takes the newest score per job (decisions 045, 046).
 - Sends are jittered 3–15 min apart starting 09:00. Never fire them all at pipeline time.
 - **Sending is disarmed by default** (040). `JOBAGENT_SEND=armed` in `.env` is the only thing
   that lets real mail leave; without it the send stage gates, schedules and logs what it would

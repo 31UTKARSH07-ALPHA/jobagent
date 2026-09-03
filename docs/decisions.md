@@ -1841,3 +1841,40 @@ The general shape, and it is the same one as 041: **a number that reads correctl
 common case can be quietly wrong in the case that matters.** Max-across-versions equals
 newest-version until a rubric tightens. Calendar weeks equal sending weeks until somebody sends
 one email and stops.
+
+---
+
+## 046 — A re-score and the morning pipeline share one daily budget
+
+**The constraint.** Groq's 200,000 tokens/day (decision 045) is *per account*, not per task. A
+scoring call costs ~2.3k, so the daily ceiling is about **85 scoring calls a day, total**,
+split between whatever the pipeline needs and whatever a re-score wants.
+
+**What that means in practice.** A morning's real work is small — 5 to 30 new postings — so the
+pipeline alone never comes close. A full re-score is ~140 calls and cannot fit in one day at
+all. Run flat out, it does not merely take two days: **it consumes the budget the 06:00 run
+needs**, and tomorrow's new postings silently fail to score while the machine busily re-scores
+jobs it already had an opinion about.
+
+**So a re-score is capped, not run to completion.** `--rescore --limit=40` is roughly 92k
+tokens, leaving ~100k for the pipeline. Three or four days for a full pass, and the live
+pipeline never notices.
+
+**Stopped at 87 of 140 on 2026-09-04** for exactly this reason. The rolling window had been
+exhausted since the previous evening, so it was managing one job per ten to fourteen minutes —
+Groq's own `retry-after`, correctly obeyed — and every one of those tokens was coming out of
+the next morning's allowance.
+
+**A partial re-score is a safe state, which is what makes stopping cheap.** `job_scores` is
+keyed on `(job_id, prompt_version)` and every reader takes the newest row per job
+(`CURRENT_FIT_SCORE`, decision 041), so 87 jobs read as v5 and 53 as v4 with no inconsistency
+anywhere. `--rescore` never touches state and only fills in missing rows, so the next pass
+continues rather than repeats.
+
+**What it settled before it stopped.** The pile-up at exactly 84 survives the profile
+correction: **83 of 142 under v4, 51 of 81 under v5** — 58% against 63%. That is the question
+024 left open, and the answer is that better project wording does not break the tie. It moves
+individual jobs across the threshold (CoinDCX 47 → 84, "Software Intern" 84 → 59) but the
+ceiling cluster is untouched, because the cause is the title-only cap at 84 itself. **Only the
+company signal can break it** — which is the rubric change that was deferred, now with evidence
+rather than a hypothesis behind it.
