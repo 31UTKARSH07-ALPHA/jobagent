@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { contactLinks, emailsIn, isUsable, rankEmail } from './cascade.ts';
+import { confidenceFor, contactLinks, emailsIn, findContacts, isUsable, rankEmail } from './cascade.ts';
 
 test('addresses are found in text, HTML and entity-escaped HTML', () => {
   assert.deepEqual(emailsIn('write to Careers@Acme.com please'), ['careers@acme.com']);
@@ -128,4 +128,49 @@ test('a careers link pointing off-site is not followed', () => {
 test('the same link twice is followed once', () => {
   const html = '<a href="/careers">Careers</a><a href="/careers#open">Open roles</a>';
   assert.deepEqual(contactLinks(html, 'https://acme.com/'), ['https://acme.com/careers']);
+});
+
+test('a page-published address off the company domain is capped at medium', () => {
+  // `high` is the band that may auto-send with nobody reading it first, and it means "read
+  // off the company's own site" — which has to mean the company's own domain. Live, two
+  // gmail.com addresses were stored `high` because a company page named them, and both were
+  // trivially MX-valid because gmail.com takes mail (decision 047).
+  assert.equal(confidenceFor('careers@acme.com', 'team_page', 'acme.com'), 'high');
+  assert.equal(confidenceFor('careers@jobs.acme.com', 'team_page', 'acme.com'), 'high');
+  assert.equal(confidenceFor('acmehr@gmail.com', 'team_page', 'acme.com'), 'medium');
+  assert.equal(confidenceFor('hiring@example.net', 'team_page', 'example.com'), 'medium');
+});
+
+test('a rung that was never high is not raised by being on the right domain', () => {
+  // The domain rule only ever lowers. `pattern` is a guess at any address.
+  assert.equal(confidenceFor('careers@acme.com', 'pattern', 'acme.com'), 'low');
+  assert.equal(confidenceFor('careers@acme.com', 'github', 'acme.com'), 'medium');
+});
+
+test('an address a send has already proven wrong is never offered again', async () => {
+  // The company's pages still publish it, and it still ranks first for all the reasons it did
+  // the first time. Re-finding it is not a second opinion (decision 047).
+  const found = await findContacts(
+    { name: 'Acme', domain: 'acme.com' },
+    { exclude: ['careers@acme.com'], timeoutMs: 1, postings: ['write to careers@acme.com'] },
+  );
+  assert.equal(
+    found.some((c) => c.email === 'careers@acme.com'),
+    false,
+  );
+});
+
+test('the exclusion covers the pattern rung too', async () => {
+  // `careers@acme.com` is exactly as guessable after it bounced as before, and a low-confidence
+  // guess still occupies the company's one cached contact row.
+  const found = await findContacts({ name: 'Acme', domain: 'acme.invalid' }, { exclude: ['careers@acme.invalid'] });
+  assert.equal(
+    found.some((c) => c.email === 'careers@acme.invalid'),
+    false,
+  );
+  assert.equal(
+    found.some((c) => c.email === 'hr@acme.invalid'),
+    true,
+    'the other guesses are still offered',
+  );
 });

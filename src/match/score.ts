@@ -20,7 +20,7 @@
 import { parseArgs } from 'node:util';
 import { complete } from '../llm/groq.ts';
 import { modelFor } from '../llm/models.ts';
-import { openDb, DEFAULT_DB_PATH, transaction } from '../store/db.ts';
+import { openDb, DEFAULT_DB_PATH, transaction, type Db } from '../store/db.ts';
 import { getJob } from '../store/jobs.ts';
 import { factorsOf, getScore, insertScore, latestScore, scoreDistribution } from '../store/scores.ts';
 import { jobIdsInState, transition } from '../store/state.ts';
@@ -33,7 +33,7 @@ import type { StageContext } from '../stage.ts';
  * kept, so the two distributions can be compared before thresholds are touched
  * (decision 008). Never edit the prompt without bumping it.
  */
-export const PROMPT_VERSION = 5;
+export const PROMPT_VERSION = 6;
 
 /**
  * `fit_score >= MATCH_THRESHOLD` → MATCHED, below → REJECTED (terminal).
@@ -55,25 +55,27 @@ export const MAX_SCORES_PER_RUN = 60;
 const MAX_DESCRIPTION_CHARS = 6_000;
 
 /**
- * The prompt asks for four narrow ratings, never an overall verdict.
+ * The prompt asks for five narrow ratings, never an overall verdict.
  *
  * Each factor is a question with an observable answer — "does this posting demand years of
  * experience" is checkable against the text; "how good a fit is this, out of 100" is not,
  * and the model answered it differently every time (decision 012).
  */
-const SYSTEM = `You rate one job posting against one candidate on four separate factors. You never
+const SYSTEM = `You rate one job posting against one candidate on five separate factors. You never
 give an overall verdict — something else combines your ratings. Rate only what you are asked.
 
-Judge the fit for THIS candidate: not how prestigious the company is, and not how good the
-posting is in the abstract. Judge on what the candidate has actually built and shipped, not
-on the keywords they listed.
+Judge the fit for THIS candidate, on what they have actually built and shipped rather than on
+the keywords they listed. Not how good the posting is in the abstract.
 
 level_fit — can this candidate, a final-year student with internship experience, hold this role?
   10  explicitly an internship, new-grad, graduate or trainee role
    7  entry-level: "0-1 years", SDE-1, junior, no experience bar stated
    4  asks for ~2 years, or is ambiguous about seniority
    1  asks for 3+ years
-   0  senior/staff/lead, or requires a degree the candidate does not have (e.g. PhD)
+   0  senior/staff/lead; requires a degree the candidate does not have (e.g. PhD); or is a
+      RETURNSHIP — a "returnship", "restart", "relaunch" or career-break programme is for
+      people re-entering work after years away, and needs the prior career a student has not
+      had. The word "intern" inside "returnship" does not make it a student internship.
   The stated experience requirement beats the title. "3+ years" is not early-career even if
   the title says "Junior".
 
@@ -85,11 +87,12 @@ location_fit — can the candidate work this job from India?
   A posting that names a foreign office and never mentions remote is 0, whatever a "remote"
   checkbox elsewhere claims. Location "not stated" with no clue in the description is 6.
 
-If the posting has no description, say so in "reasoning" and rate stack_fit and domain_fit on
-what the title alone implies — "AI Engineering Intern" is real evidence of an ML stack,
-"Software Development Intern (Full Stack)" of a web one, and a bare "Intern" almost none. Do
-NOT discount your ratings for the missing description: that is handled after you, in
-arithmetic. Rate the title honestly, including low when the title says little.
+If the posting has no description, say so in "reasoning" and rate stack_fit, domain_fit and
+employer_fit on what the title and the company name alone imply — "AI Engineering Intern" is
+real evidence of an ML stack, "Software Development Intern (Full Stack)" of a web one, and a
+bare "Intern" almost none. Do NOT discount your ratings for the missing description: that is
+handled after you, in arithmetic. Rate the title honestly, including low when the title says
+little.
 
 stack_fit — how much of the posting's core technology has this candidate actually used?
   10  the posting's main languages and tools are the ones they have built with
@@ -103,6 +106,31 @@ domain_fit — how much do the problems overlap?
    3  software, but a different discipline
    0  not a software or ML engineering role at all
 
+employer_fit — how much is actually known about this employer, and is this posting theirs?
+  ANCHOR: start at 4 and move only for a reason you can state. Most of these companies are
+  small and unknown, and "unknown" is 4 — not 10. Do not read a name as a credential:
+  "Technologies", "Solutions", "Innovations", "Soft", "Labs" and "Systems" appear in the names
+  of thousands of tiny consultancies and say nothing about the engineering inside.
+  10  a company you genuinely recognise and can say what it builds, whose product IS software
+      and whose engineering is substantial
+   7  a company you genuinely recognise whose product is NOT software (a bank, a retailer, a
+      manufacturer) but which employs real engineers; or a small software company where the
+      posting itself gives concrete evidence of real engineering
+   4  DEFAULT — a plausible employer you do not recognise, with nothing in the posting to say
+      either way. This is the honest answer for most postings and you should use it often
+   1  a training, edtech, "upskilling", "placement" or bootcamp company. It sells courses, and
+      its "interns" are frequently the paying customers
+   0  NOT THE EMPLOYER AT ALL: a job board, aggregator, listing site or staffing agency
+      reposting somebody else's role
+  The company NAME is evidence and you are given it. "NexisGrow Jobs & Internships" offering
+  "Software Engineer Intern at Cargill" is an aggregator, not Cargill — rate the aggregator, 0.
+  A "company" whose name is itself a job title, or which contains "jobs" or "internships", is a
+  listing site. When the title names a different company than the Company field, it is a
+  repost: 0.
+  This is a question about EVIDENCE, not prestige. A ten-person startup can be a 10 — but only
+  when you can say what it builds. If you cannot, the answer is 4, and that is not a criticism
+  of the company.
+
 reasoning — two or three sentences, concrete. Name the specific thing that matched and the
 specific thing that did not. A human reads this every morning; no filler.
 
@@ -113,16 +141,32 @@ never a generality like "passionate about AI". If nothing genuinely connects, sa
 in one line rather than inventing a link.`;
 
 /**
- * How the four factors become one number.
+ * How the five factors become one number.
  *
- * Level and location carry the most weight because they are the two things that make a
- * posting flatly impossible rather than merely a stretch.
+ * Level and location still lead, because they are the two things that make a posting flatly
+ * impossible rather than merely a stretch — but they carry **less** than they did in v5, and
+ * that is the point of the change.
+ *
+ * Both are 10 for every posting worth ranking. An internship advertised in Bengaluru earns
+ * `level 10 · location 10` by construction, so 0.55 of the old weight was a constant across
+ * the entire draftable queue: it separated the impossible postings from the possible ones and
+ * then had nothing left to say. Meanwhile the two remaining factors also max out, because a
+ * posting titled "Full Stack Development Internship" genuinely is this candidate's stack and
+ * domain. Hence 81 of 99 v5 scores landing on the same number (decision 051).
+ *
+ * `employer_fit` gets 0.2 because it is the only one of the five that actually varies across
+ * the postings this has to choose between. The floor those two blockers set is now 0.45
+ * rather than 0.55, which is what gives the other three room to rank.
+ *
+ * The impossible cases do not rely on these weights anyway — `BLOCKER_AT_OR_BELOW` is a hard
+ * ceiling and does that job on its own.
  */
 export const WEIGHTS = {
-  level_fit: 0.3,
-  location_fit: 0.25,
-  stack_fit: 0.25,
-  domain_fit: 0.2,
+  level_fit: 0.25,
+  location_fit: 0.2,
+  stack_fit: 0.2,
+  domain_fit: 0.15,
+  employer_fit: 0.2,
 } as const;
 
 /**
@@ -152,7 +196,8 @@ export function fitScore(r: ScoreResult, titleOnly: boolean): number {
     r.level_fit * WEIGHTS.level_fit +
     r.location_fit * WEIGHTS.location_fit +
     r.stack_fit * WEIGHTS.stack_fit +
-    r.domain_fit * WEIGHTS.domain_fit;
+    r.domain_fit * WEIGHTS.domain_fit +
+    r.employer_fit * WEIGHTS.employer_fit;
 
   let score = Math.round(weighted * 10);
 
@@ -205,9 +250,21 @@ export const TITLE_ONLY_CEILING = 84;
 export const isTitleOnly = (job: Pick<Job, 'description'>): boolean =>
   job.description.trim().length < MIN_DESCRIPTION_CHARS;
 
-/** `level 10 · location 8 · stack 6 · domain 4` — for logs and, later, the digest. */
-export const factorLine = (r: ScoreResult): string =>
-  `level ${r.level_fit} · location ${r.location_fit} · stack ${r.stack_fit} · domain ${r.domain_fit}`;
+/**
+ * `level 10 · location 8 · stack 6 · domain 4 · employer 7` — for logs and the digest.
+ *
+ * `employer_fit` is dropped when it is null rather than shown as a 0 or a dash. A row written
+ * under v5 or earlier was never asked the question, and printing any number there would put an
+ * opinion the model never gave in front of him every morning.
+ */
+export const factorLine = (r: Omit<ScoreResult, 'employer_fit'> & { employer_fit: number | null }): string =>
+  [
+    `level ${r.level_fit}`,
+    `location ${r.location_fit}`,
+    `stack ${r.stack_fit}`,
+    `domain ${r.domain_fit}`,
+    ...(r.employer_fit === null ? [] : [`employer ${r.employer_fit}`]),
+  ].join(' · ');
 
 /**
  * The profile as prompt text.
@@ -360,11 +417,15 @@ export async function runScore(ctx: StageContext, deps: ScoreDeps = {}): Promise
     try {
       // A score row already here means a previous run died between the insert and the
       // transition. Reuse it rather than paying for the same judgement twice.
-      const existing = getScore(ctx.db, job.id, PROMPT_VERSION);
+      //
+      // `factorsOf` returns null for a row that predates a factor the current rubric needs,
+      // which cannot happen for a row fetched at `PROMPT_VERSION` — but reading it as "no
+      // usable row, ask the model" is the answer that stays correct if that ever changes.
+      const stored = getScore(ctx.db, job.id, PROMPT_VERSION);
+      const reused = stored === null ? null : factorsOf(stored);
       const titleOnly = isTitleOnly(job);
-      const result = existing
-        ? factorsOf(existing)
-        : await scorer.score(job, job.company_name, profile, ctx.signal);
+      const result = reused ?? (await scorer.score(job, job.company_name, profile, ctx.signal));
+      const existing = reused !== null;
 
       if (existing) ctx.count('reused_score');
       if (titleOnly && !existing) ctx.count('title_only');
@@ -395,6 +456,175 @@ export async function runScore(ctx: StageContext, deps: ScoreDeps = {}): Promise
 // ─────────────────────────────────────────────────────────────────────────────
 // CLI — prompt iteration and the calibration gate
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Everything the threshold decision needs, from stored rows only — no model calls, so it costs
+ * nothing and can be run mid-migration.
+ *
+ * `--distribution` prints one histogram for one rubric version, which is not enough to choose a
+ * threshold and never was. Three things are missing from it, and `phases.md` has asked for the
+ * first since Phase 1:
+ *
+ * 1. **Split by source.** An ATS posting arrives with a full description; an alert-email
+ *    posting arrives with a title (016). The same rubric is working from two very different
+ *    amounts of evidence and title-only totals are additionally capped at 84 (023), so one
+ *    histogram across both compares unlike things — and a threshold chosen on the mixture is
+ *    chosen on neither.
+ * 2. **What a candidate threshold would actually do**, as a count and a list of the postings it
+ *    would newly reject. A number is not reviewable; the titles are.
+ * 3. **Which jobs changed sides** versus the previous rubric, which is the only way to see
+ *    whether a bump tightened the right band or simply shifted everything.
+ *
+ * It reports its own sample size first, because a threshold chosen on a third of a re-score is
+ * a threshold chosen on whatever `ORDER BY j.id` happened to reach.
+ */
+export type Calibration = {
+  version: number;
+  previous: number | null;
+  scored: number;
+  total: number;
+  groups: {
+    label: string;
+    scores: number[];
+    /** `[threshold, matched, rejectedTitles]` for each candidate. */
+    candidates: { threshold: number; matched: number; rejected: string[] }[];
+  }[];
+  /** Jobs whose side of the threshold changed between the two rubrics. */
+  moved: { title: string; company: string; from: number; to: number; direction: 'up' | 'down' }[];
+};
+
+/** Thresholds worth reporting. 70 is the incumbent; the rest bracket it. */
+export const THRESHOLD_CANDIDATES = [65, 70, 75, 80, 84, 85] as const;
+
+export function calibration(db: Db, version: number = PROMPT_VERSION): Calibration {
+  const rows = db
+    .prepare(
+      `SELECT s.fit_score, s.job_id, j.title, j.description, c.name AS company
+         FROM job_scores s
+         JOIN jobs j ON j.id = s.job_id
+         JOIN companies c ON c.id = j.company_id
+        WHERE s.prompt_version = ?`,
+    )
+    .all(version) as { fit_score: number; job_id: number; title: string; description: string; company: string }[];
+
+  const total = (db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE state <> 'EXPIRED'").get() as { n: number }).n;
+
+  const split = {
+    'described (ATS)': rows.filter((r) => !isTitleOnly(r)),
+    'title-only (alert)': rows.filter((r) => isTitleOnly(r)),
+  };
+
+  const groups = Object.entries(split).map(([label, group]) => ({
+    label,
+    scores: group.map((r) => r.fit_score).sort((a, b) => a - b),
+    candidates: THRESHOLD_CANDIDATES.map((threshold) => ({
+      threshold,
+      matched: group.filter((r) => r.fit_score >= threshold).length,
+      // What this threshold costs, named. Only the band between the incumbent and the
+      // candidate is interesting — everything below 70 was already rejected.
+      rejected: group
+        .filter((r) => r.fit_score < threshold && r.fit_score >= MATCH_THRESHOLD)
+        .map((r) => `${r.company} — ${r.title}`),
+    })),
+  }));
+
+  // The previous version any of these jobs was scored under, for the movement table.
+  const previous =
+    (
+      db
+        .prepare('SELECT MAX(prompt_version) AS v FROM job_scores WHERE prompt_version < ?')
+        .get(version) as { v: number | null }
+    ).v ?? null;
+
+  const moved: Calibration['moved'] = [];
+  if (previous !== null) {
+    for (const row of rows) {
+      const before = db
+        .prepare('SELECT fit_score FROM job_scores WHERE job_id = ? AND prompt_version = ?')
+        .get(row.job_id, previous) as { fit_score: number } | undefined;
+      if (before === undefined) continue;
+
+      const was = before.fit_score >= MATCH_THRESHOLD;
+      const now = row.fit_score >= MATCH_THRESHOLD;
+      if (was === now) continue;
+      moved.push({
+        title: row.title,
+        company: row.company,
+        from: before.fit_score,
+        to: row.fit_score,
+        direction: now ? 'up' : 'down',
+      });
+    }
+  }
+
+  return { version, previous, scored: rows.length, total, groups, moved };
+}
+
+/** The calibration report: sample size, the split by source, candidates, and what moved. */
+function printCalibration(dbPath: string): number {
+  const db = openDb(dbPath);
+  const c = calibration(db);
+  db.close();
+
+  if (c.scored === 0) {
+    console.log(`no scores yet under rubric v${c.version} — run --rescore first`);
+    return 0;
+  }
+
+  const pct = Math.round((c.scored / c.total) * 100);
+  console.log(`rubric v${c.version} — ${c.scored} of ${c.total} live jobs scored (${pct}%)`);
+  if (pct < 90) {
+    console.log(
+      `\n  ⚠ the re-score is incomplete, and \`--rescore\` walks jobs in id order — so this\n` +
+        `    sample is the oldest ${c.scored} jobs, not a random one. Treat every number below as\n` +
+        `    provisional until this reads ~100%.`,
+    );
+  }
+
+  for (const g of c.groups) {
+    if (g.scores.length === 0) {
+      console.log(`\n${g.label}: none scored yet`);
+      continue;
+    }
+    const mid = Math.floor(g.scores.length / 2);
+    const median =
+      g.scores.length % 2 === 1 ? g.scores[mid]! : Math.round((g.scores[mid - 1]! + g.scores[mid]!) / 2);
+
+    console.log(`\n── ${g.label} — ${g.scores.length} scored`);
+    console.log(`   min ${g.scores[0]}  median ${median}  max ${g.scores[g.scores.length - 1]}`);
+
+    const bands = Array<number>(10).fill(0);
+    for (const v of g.scores) bands[Math.min(Math.floor(v / 10), 9)]!++;
+    const widest = Math.max(...bands);
+    bands.forEach((n, i) => {
+      if (n === 0) return;
+      const label = `${i * 10}-${i === 9 ? 100 : i * 10 + 9}`.padStart(7);
+      console.log(`   ${label} ${String(n).padStart(3)} ${'█'.repeat(Math.round((n / widest) * 28))}`);
+    });
+
+    console.log('\n   threshold   matches   would newly reject');
+    for (const k of g.candidates) {
+      const mark = k.threshold === MATCH_THRESHOLD ? ' ←' : '  ';
+      const share = Math.round((k.matched / g.scores.length) * 100);
+      console.log(`   ${String(k.threshold).padStart(6)}${mark}  ${String(k.matched).padStart(4)} (${String(share).padStart(3)}%)  ${k.rejected.length}`);
+      for (const title of k.rejected.slice(0, 4)) console.log(`                          · ${title.slice(0, 66)}`);
+      if (k.rejected.length > 4) console.log(`                          · … and ${k.rejected.length - 4} more`);
+    }
+  }
+
+  if (c.previous !== null) {
+    console.log(`\n── crossed the threshold since v${c.previous} (${MATCH_THRESHOLD})`);
+    const down = c.moved.filter((m) => m.direction === 'down');
+    const up = c.moved.filter((m) => m.direction === 'up');
+    console.log(`   ${down.length} newly rejected, ${up.length} newly matched`);
+    for (const m of [...down, ...up]) {
+      console.log(`   ${m.direction === 'down' ? '↓' : '↑'} ${m.from} → ${m.to}  ${m.company} — ${m.title.slice(0, 48)}`);
+    }
+  }
+
+  console.log(`\nMATCH_THRESHOLD is ${MATCH_THRESHOLD} (decisions 024, 051).`);
+  return 0;
+}
 
 /** Print the score histogram the threshold is calibrated against. */
 function printDistribution(dbPath: string): number {
@@ -539,17 +769,21 @@ async function main(argv: string[]): Promise<number> {
     options: {
       job: { type: 'string' },
       distribution: { type: 'boolean', default: false },
+      calibrate: { type: 'boolean', default: false },
       rescore: { type: 'boolean', default: false },
       limit: { type: 'string', default: String(MAX_SCORES_PER_RUN) },
       db: { type: 'string', default: DEFAULT_DB_PATH },
     },
   });
 
+  if (values.calibrate) return printCalibration(values.db);
   if (values.distribution) return printDistribution(values.db);
   if (values.job !== undefined) return scoreOne(values.db, Number(values.job));
   if (values.rescore) return rescore(values.db, Number(values.limit));
 
-  console.error('usage: node src/match/score.ts --job=<id> | --distribution | --rescore [--db=<path>]');
+  console.error('usage: node src/match/score.ts --job=<id> | --distribution | --calibrate | --rescore [--db=<path>]');
+  console.error('       --calibrate  everything the threshold decision needs, split by source.');
+  console.error('                    Reads stored rows only — no model calls, safe mid-migration.');
   console.error('       --rescore  score every job missing a score at the current PROMPT_VERSION,');
   console.error('                  without changing any state. For the calibration gate.');
   console.error('       (to score everything waiting: node src/main.ts --stage=score)');

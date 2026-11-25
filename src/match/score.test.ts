@@ -19,6 +19,9 @@ import {
   PROMPT_VERSION,
   EVIDENCE_PENALTY,
   TITLE_ONLY_CEILING,
+  WEIGHTS,
+  calibration,
+  factorLine,
   fitScore,
   isTitleOnly,
   jobForPrompt,
@@ -68,6 +71,7 @@ const judgement = (over: Partial<ScoreResult> = {}): ScoreResult => ({
   location_fit: 10,
   stack_fit: 10,
   domain_fit: 10,
+  employer_fit: 10,
   reasoning: 'r',
   hook: 'h',
   ...over,
@@ -137,11 +141,14 @@ function seed(db: Db, titles: string[], description = REAL_JD): number[] {
 test('the score is a pure function of the factors, and spans the full range', () => {
   assert.equal(fitScore(judgement(), false), 100);
   assert.equal(
-    fitScore(judgement({ level_fit: 0, location_fit: 0, stack_fit: 0, domain_fit: 0 }), false),
+    fitScore(
+      judgement({ level_fit: 0, location_fit: 0, stack_fit: 0, domain_fit: 0, employer_fit: 0 }),
+      false,
+    ),
     0,
   );
-  // 10·.3 + 10·.25 + 5·.25 + 5·.2 = 7.75 → 78
-  assert.equal(fitScore(judgement({ stack_fit: 5, domain_fit: 5 }), false), 78);
+  // 10·.25 + 10·.2 + 5·.2 + 5·.15 + 10·.2 = 8.25 → 83 (half rounds up)
+  assert.equal(fitScore(judgement({ stack_fit: 5, domain_fit: 5 }), false), 83);
   // Same ratings twice must give the same number — that is the whole point of moving it
   // out of the model.
   const twice = judgement({ stack_fit: 3, domain_fit: 7 });
@@ -384,3 +391,156 @@ test('the stage stores what the model actually said, not a flattened copy', asyn
   db.close();
 });
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Rubric v6 — the employer signal (decision 051)
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('the employer factor is what separates postings the other four cannot', () => {
+  // The v5 pile-up, exactly: 81 of 99 scores landed on 84 because an internship in Bengaluru
+  // is level 10 · location 10 by construction, and a title like "Full Stack Development
+  // Internship" genuinely is this candidate's stack and domain. Four factors pinned at 10 is
+  // arithmetic with no inputs left.
+  const titleOnly = true;
+  const spread = [10, 7, 4, 1, 0].map((employer_fit) =>
+    fitScore(judgement({ employer_fit }), titleOnly),
+  );
+
+  // Every one distinct, where v5 gave the same number five times.
+  assert.equal(new Set(spread).size, spread.length, `got ${spread.join(', ')}`);
+  // And ordered: a real employer outranks a job board.
+  assert.deepEqual(spread, [...spread].sort((a, b) => b - a));
+});
+
+test('an aggregator reposting somebody else\'s role falls below the threshold', () => {
+  // "NexisGrow Jobs & Internships" advertising "Software Engineer Intern at Cargill" scored 84
+  // under v5 — tied with Stripe. We cannot tell who is hiring or where to write, which is the
+  // same problem decision 031 found on the contacts side.
+  const aggregated = fitScore(judgement({ employer_fit: 0 }), true);
+  assert.ok(aggregated < MATCH_THRESHOLD, `got ${aggregated}`);
+  assert.equal(stateForScore(aggregated), 'REJECTED');
+});
+
+test('a strong title-only posting still cannot reach the auto-send band', () => {
+  // The ceiling from decision 023 survives the new factor: a posting nobody has read must not
+  // be able to mail itself, whatever its employer rating.
+  const best = fitScore(judgement(), true);
+  assert.equal(best, TITLE_ONLY_CEILING);
+  assert.ok(best < 85);
+});
+
+test('the weights still sum to one, so a perfect posting is exactly 100', () => {
+  // Adding a fifth factor without re-dividing the other four would have inflated every score
+  // by 20% and quietly moved every job across the threshold.
+  const total = Object.values(WEIGHTS).reduce((a, b) => a + b, 0);
+  assert.equal(total, 1);
+  assert.equal(fitScore(judgement(), false), 100);
+});
+
+test('a factor line omits the employer rating when the row predates it', () => {
+  // v2–v5 rows were never asked. Printing a 0 or a dash there would put an opinion the model
+  // never gave in front of him every morning.
+  assert.match(factorLine(judgement()), /employer 10$/);
+  assert.doesNotMatch(factorLine({ ...judgement(), employer_fit: null }), /employer/);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The calibration report (decision 055)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A scored job, with or without a description, at a given rubric version. */
+function scored(
+  db: ReturnType<typeof openDb>,
+  opts: { title: string; fit: number; version?: number; described?: boolean },
+): number {
+  const companyId = upsertCompany(db, { name: `Co-${opts.title}`, domain: `${opts.fit}-x.com` });
+  const { id } = upsertJob(
+    db,
+    companyId,
+    RawJob.parse({
+      company_name: `Co-${opts.title}`,
+      company_domain: `${opts.fit}-x.com`,
+      source: opts.described === true ? 'greenhouse' : 'gmail-alert',
+      source_id: opts.title,
+      url: `https://x.com/${encodeURIComponent(opts.title)}`,
+      title: opts.title,
+      location: 'Bengaluru',
+      description: opts.described === true ? 'A real job description. '.repeat(20) : '',
+    }),
+  );
+  insertScore(db, id, opts.version ?? PROMPT_VERSION, opts.fit, judgement(), 'test');
+  return id;
+}
+
+test('the report splits by source, because the two carry different evidence', () => {
+  // An ATS posting arrives with a description; an alert posting arrives with a title (016), and
+  // title-only totals are additionally capped at 84 (023). One histogram across both compares
+  // unlike things — which is what `phases.md` has asked for since Phase 1.
+  const db = openDb(':memory:');
+  scored(db, { title: 'Described Intern', fit: 94, described: true });
+  scored(db, { title: 'Alert Intern A', fit: 75 });
+  scored(db, { title: 'Alert Intern B', fit: 84 });
+
+  const c = calibration(db);
+  const byLabel = Object.fromEntries(c.groups.map((g) => [g.label, g.scores]));
+
+  assert.deepEqual(byLabel['described (ATS)'], [94]);
+  assert.deepEqual(byLabel['title-only (alert)'], [75, 84]);
+  db.close();
+});
+
+test('a candidate threshold is reported with the postings it would cost', () => {
+  // A count is not reviewable; the titles are. Only the band between the incumbent and the
+  // candidate is listed — everything under 70 was already rejected.
+  const db = openDb(':memory:');
+  scored(db, { title: 'Keeper', fit: 84 });
+  scored(db, { title: 'Marginal', fit: 72 });
+  scored(db, { title: 'Already rejected', fit: 40 });
+
+  const group = calibration(db).groups.find((g) => g.label.startsWith('title-only'))!;
+  const at80 = group.candidates.find((k) => k.threshold === 80)!;
+
+  assert.equal(at80.matched, 1);
+  assert.equal(at80.rejected.length, 1, 'the 40 was never a match, so it is not a new cost');
+  assert.match(at80.rejected[0]!, /Marginal/);
+  db.close();
+});
+
+test('the report says how much of the re-score it is looking at', () => {
+  // A threshold chosen on a third of a re-score is chosen on whatever `ORDER BY j.id` reached.
+  const db = openDb(':memory:');
+  scored(db, { title: 'Scored', fit: 84 });
+  // Two more jobs that exist but have no v6 row yet.
+  scored(db, { title: 'Old A', fit: 84, version: PROMPT_VERSION - 1 });
+  scored(db, { title: 'Old B', fit: 84, version: PROMPT_VERSION - 1 });
+
+  const c = calibration(db);
+  assert.equal(c.scored, 1);
+  assert.equal(c.total, 3, 'counts live jobs, not scored ones');
+  db.close();
+});
+
+test('a job that changed sides of the threshold is named, with both scores', () => {
+  const db = openDb(':memory:');
+  const job = scored(db, { title: 'Fell below', fit: 84, version: PROMPT_VERSION - 1 });
+  insertScore(db, job, PROMPT_VERSION, 63, judgement(), 'test');
+
+  const c = calibration(db);
+  assert.equal(c.previous, PROMPT_VERSION - 1);
+  assert.equal(c.moved.length, 1);
+  assert.deepEqual(
+    { from: c.moved[0]!.from, to: c.moved[0]!.to, direction: c.moved[0]!.direction },
+    { from: 84, to: 63, direction: 'down' },
+  );
+  db.close();
+});
+
+test('a job whose score moved but not across the threshold is not reported as movement', () => {
+  // The question is which side of the line a job is on, not how far it travelled.
+  const db = openDb(':memory:');
+  const job = scored(db, { title: 'Still a match', fit: 100, version: PROMPT_VERSION - 1 });
+  insertScore(db, job, PROMPT_VERSION, 84, judgement(), 'test');
+
+  assert.deepEqual(calibration(db).moved, []);
+  db.close();
+});

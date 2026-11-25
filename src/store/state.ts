@@ -21,7 +21,16 @@ export const TRANSITIONS: Readonly<Record<JobState, readonly JobState[]>> = {
   MATCHED: ['DRAFTED', 'NEEDS_CONTACT', 'EXPIRED'],
   // retried every 3 days, 3 attempts, then EXPIRED
   NEEDS_CONTACT: ['DRAFTED', 'EXPIRED'],
-  DRAFTED: ['AUTO_SEND', 'PENDING_APPROVAL'],
+  // `DRAFTED → EXPIRED` is for a job the pipeline will never act on, and it is legal **only
+  // while no `outreach` row exists** — the guard lives in `expireUnactionable`, because the
+  // state machine cannot see other tables. `DRAFTED` means "has a contact, ready to be written
+  // about", not "written about"; the draft stage is what creates the row. So a job can sit here
+  // indefinitely, and six did: scoring 47–65 after the v5 re-score moved under them, refused by
+  // the draft stage on every run, with no edge out (decision 050).
+  //
+  // The gate cannot be affected: `ungated` joins `outreach`, so a `DRAFTED` job with no row is
+  // already invisible to it.
+  DRAFTED: ['AUTO_SEND', 'PENDING_APPROVAL', 'EXPIRED', 'REJECTED_BY_USER'],
   // `AUTO_SEND → PENDING_APPROVAL` is a demotion, and it exists on a principle worth stating:
   // **human review may always be added, never automatically removed.** There is deliberately
   // no edge the other way, so a job cannot be promoted out of the approval queue by anything

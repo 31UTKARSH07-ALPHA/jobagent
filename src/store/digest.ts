@@ -7,7 +7,7 @@
 import type { Db } from './db.ts';
 import { Job, JobScore, nowIso } from './schema.ts';
 import { MATCH_THRESHOLD } from '../match/score.ts';
-import { isUnpaid } from '../ingest/filter.ts';
+import { internshipRecommendationExclusion } from '../ingest/compensation.ts';
 
 /**
  * What the contacts and draft stages did about a job, when they got that far.
@@ -17,7 +17,7 @@ import { isUnpaid } from '../ingest/filter.ts';
  */
 export type DigestOutreach = {
   email: string;
-  /** `high` is auto-send eligible in Phase 3; everything else waits for a tap. */
+  /** Where the address came from. Everything waits for a tap while 048's lock is on. */
   confidence: string;
   /** The drafted subject line, when a draft exists in Gmail. */
   subject: string | null;
@@ -118,9 +118,9 @@ export function pendingDigestItems(
       }))
       // Unpaid postings are rejected at ingest from now on, but the ones already stored have
       // to be held back too, and REJECTED is terminal so their state cannot be walked back
-      // (027). Filtered here rather than in SQL so `isUnpaid` stays the only definition —
+      // (027). Apply compensation rules in TypeScript —
       // SQLite has no REGEXP, and a LIKE list would be a second, drifting copy.
-      .filter((item) => !isUnpaid(item.job.title))
+      .filter((item) => !internshipRecommendationExclusion(item.job))
   );
 }
 
@@ -162,6 +162,7 @@ export function pendingDraftItems(db: Db, limit?: number): DraftItem[] {
          JOIN contacts k ON k.id = o.contact_id
         WHERE o.digested_at IS NULL
           AND o.sent_at IS NULL
+          AND o.delete_requested_at IS NULL AND o.archived_at IS NULL AND o.edit_pending = 0
         ORDER BY o.drafted_at DESC, o.id DESC
         ${limit === undefined ? '' : 'LIMIT ?'}`,
     )

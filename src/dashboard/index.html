@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JobAgent Workspace</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/learning.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="#dashboard"><span class="monogram">J<span>.</span></span><span class="brand-copy">JobAgent<small>CAREER WORKSPACE</small></span></a>
+    <p class="nav-label">WORKSPACE</p>
+    <nav aria-label="Workspace">
+      <a href="#dashboard" title="Dashboard"><span class="nav-icon" data-icon="dashboard"></span><span class="nav-copy">Dashboard</span></a>
+      <a href="#alerts" title="Job alerts"><span class="nav-icon" data-icon="briefcase"></span><span class="nav-copy">Job alerts</span></a>
+      <a href="#applications" title="Applications"><span class="nav-icon" data-icon="folder"></span><span class="nav-copy">Applications</span></a>
+      <a href="#learning" title="Learning"><span class="nav-icon" data-icon="book"></span><span class="nav-copy">Learning</span></a>
+    </nav>
+    <p class="nav-label">COMMUNICATIONS</p>
+    <nav aria-label="Communications">
+      <a href="#outreach" title="Outreach"><span class="nav-icon" data-icon="mail"></span><span class="nav-copy">Outreach</span><span id="draftCount" class="nav-count"></span></a>
+      <a href="#replies" title="Replies"><span class="nav-icon" data-icon="reply"></span><span class="nav-copy">Replies</span></a>
+      <a href="#followups" title="Follow-ups"><span class="nav-icon" data-icon="clock"></span><span class="nav-copy">Follow-ups</span></a>
+      <a href="#analytics" title="Analytics"><span class="nav-icon" data-icon="chart"></span><span class="nav-copy">Analytics</span></a>
+    </nav>
+    <div class="sidebar-bottom"><nav aria-label="Preferences"><a href="#settings" title="Settings"><span class="nav-icon" data-icon="settings"></span><span class="nav-copy">Settings</span></a></nav><div class="local"><span></span> Personal workspace · Local</div></div>
+  </aside>
+  <main>
+    <header class="top"><div class="top-leading"><button id="toggleSidebar" type="button" aria-label="Toggle sidebar" title="Toggle sidebar"><span class="ui-icon" data-icon="sidebar"></span></button><span>Workspace <b>/</b> <strong id="crumb">Dashboard</strong></span></div><button id="refresh" type="button"><span class="ui-icon" data-icon="refresh"></span> Refresh</button></header>
+    <section class="page" id="content" aria-labelledby="title">
+      <header class="hero"><p id="eyebrow" class="eyebrow">01 / OPPORTUNITIES</p><h1 id="title">Job alerts<span>.</span></h1><p id="intro">New roles from your alerts and company boards, newest first.</p></header>
+      <div id="message" role="status" hidden></div>
+      <div id="view" aria-busy="true"><p class="empty">Loading your workspace…</p></div>
+    </section>
+  </main>
+  <dialog id="confirm" aria-labelledby="confirmTitle" aria-describedby="confirmCopy">
+    <form id="confirmForm" method="dialog">
+      <h2 id="confirmTitle">Review and queue this email</h2>
+      <p id="confirmCopy"></p>
+      <div id="confirmPreview" class="confirm-preview" hidden></div>
+      <label id="confirmReviewLabel" class="confirm-review" hidden>
+        <input id="confirmReview" type="checkbox"> I reviewed the recipient, subject, and message.
+      </label>
+      <div class="buttons">
+        <button value="cancel" autofocus>Cancel</button>
+        <button id="confirmAction" class="primary" value="send" disabled>Confirm and queue</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

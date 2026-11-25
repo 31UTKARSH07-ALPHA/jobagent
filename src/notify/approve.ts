@@ -16,6 +16,7 @@
  */
 import type { StageContext } from '../stage.ts';
 import { nowIso } from '../store/schema.ts';
+import { sendingArmed } from '../send/gate.ts';
 import { tryTransition } from '../store/state.ts';
 import {
   answerTap,
@@ -76,6 +77,7 @@ function unasked(ctx: StageContext, limit: number): Askable[] {
         WHERE j.state = 'PENDING_APPROVAL'
           AND o.approved_at IS NULL
           AND o.approval_asked_at IS NULL
+          AND o.archived_at IS NULL AND o.edit_pending = 0 AND o.delete_requested_at IS NULL
           AND o.sent_at IS NULL
         ORDER BY o.id
         LIMIT ?`,
@@ -103,6 +105,7 @@ export function formatAsk(item: Askable): string {
 
 export type ApproveDeps = {
   config?: TelegramConfig;
+  armed?: boolean;
   ask?: typeof sendWithButtons;
   taps?: typeof getTaps;
   answer?: typeof answerTap;
@@ -217,9 +220,21 @@ export async function runApprove(ctx: StageContext, deps: ApproveDeps = {}): Pro
     }
 
     if (tap.data.action === 'approve') {
+      if (!(deps.armed ?? sendingArmed())) {
+        await answer(config, tap.callbackId, 'Sending is disarmed. Nothing was queued.', ctx.signal);
+        continue;
+      }
       // Approval is not sending. The row joins the 09:00 queue and leaves at its jittered
       // slot through the same code path as an auto-send (decision 007).
-      ctx.db.prepare('UPDATE outreach SET approved_at = ? WHERE id = ?').run(nowIso(), row.id);
+      const { changes } = ctx.db.prepare(`UPDATE outreach SET approved_at = ?
+        WHERE id = ? AND sent_at IS NULL AND delete_requested_at IS NULL
+          AND archived_at IS NULL AND edit_pending = 0 AND revision = 0
+          AND EXISTS (SELECT 1 FROM jobs WHERE id = outreach.job_id AND state = 'PENDING_APPROVAL')`)
+        .run(nowIso(), row.id);
+      if (!changes) {
+        await answer(config, tap.callbackId, 'This draft is no longer available to approve.', ctx.signal);
+        continue;
+      }
       ctx.count('approved');
       ctx.log(`approved: ${row.company} → ${row.email}`);
       await answer(config, tap.callbackId, 'Approved — it will go out in the next send window.', ctx.signal);

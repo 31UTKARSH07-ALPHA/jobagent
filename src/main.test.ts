@@ -13,7 +13,15 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb } from './store/db.ts';
-import { DEFAULT_STAGE_BUDGET_MS, STAGE_BUDGET_MS, STAGES, main } from './main.ts';
+import {
+  DEFAULT_STAGE_BUDGET_MS,
+  STAGE_BUDGET_MS,
+  STAGES,
+  SUSPEND_OVERSHOOT_MS,
+  main,
+  sleptThrough,
+  suspendedFault,
+} from './main.ts';
 
 const tmpDb = () => join(mkdtempSync(join(tmpdir(), 'jobagent-')), 'test.db');
 
@@ -74,4 +82,42 @@ test('a stage that hangs is abandoned, and the stages after it still run', async
     delete STAGE_BUDGET_MS['ingest'];
     STAGE_BUDGET_MS['ingest'] = 12 * 60_000;
   }
+});
+
+test('a stage that merely ignores its signal is not blamed on the laptop', () => {
+  // The two failures look identical in the log and lead opposite ways, so the line between
+  // them has to be somewhere no real overshoot reaches. A stage stuck in one uninterruptible
+  // call overshoots by that call: a 5s DNS probe, a 20s HTTP timeout (decisions 028, 029).
+  const budget = 12 * 60_000;
+  assert.equal(sleptThrough(budget + 5_000, budget), false, 'a hung DNS lookup');
+  assert.equal(sleptThrough(budget + 20_000, budget), false, 'a hung HTTP request');
+  assert.equal(sleptThrough(budget + SUSPEND_OVERSHOOT_MS, budget), false, 'the boundary is exclusive');
+});
+
+test('a stage the machine slept through is recognised as exactly that', () => {
+  // The five overshoots measured on 2026-09-05, smallest first. A `setTimeout` does not run
+  // while the process is suspended, so this is the only shape that produces them.
+  const budget = 15 * 60_000;
+  assert.equal(sleptThrough(budget + 139_000, budget), true, 'contacts, the smallest of them');
+  assert.equal(sleptThrough(17 * 60_000, 8 * 60_000), true, 'the digest, over twice its budget');
+});
+
+test('one fault for the run, naming every stage and the worst of them', () => {
+  // The five stages of 2026-09-05. Five faults for one shut lid would send five alerts (026).
+  const said = suspendedFault([
+    { name: 'ingest', elapsed: 1_016_670, budgetMs: 12 * 60_000 },
+    { name: 'contacts', elapsed: 1_039_230, budgetMs: 15 * 60_000 },
+    { name: 'draft', elapsed: 1_596_499, budgetMs: 20 * 60_000 },
+    { name: 'digest', elapsed: 1_059_914, budgetMs: 8 * 60_000 },
+  ]);
+
+  assert.ok(said !== null);
+  for (const stage of ['ingest', 'contacts', 'draft', 'digest']) assert.match(said, new RegExp(stage));
+  // The digest overran by 9.7 minutes; the draft stage only by 6.6, despite running longer.
+  assert.match(said, /worst digest at 18m against a 8m budget/);
+  assert.match(said, /symptom of that, not the cause/, 'the clause the whole thing exists for');
+});
+
+test('a healthy run says nothing about power at all', () => {
+  assert.equal(suspendedFault([]), null);
 });

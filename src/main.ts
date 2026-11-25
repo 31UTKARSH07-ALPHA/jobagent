@@ -111,6 +111,62 @@ export const STAGE_BUDGET_MS: Record<string, number> = {
 
 export const DEFAULT_STAGE_BUDGET_MS = 10 * 60_000;
 
+/**
+ * How far past its budget a stage may run before the explanation stops being the code.
+ *
+ * The budget is a `setTimeout`, and a suspended process does not run timers — so a stage that
+ * overshoots by *minutes* is not a stage ignoring `ctx.signal`, it is a machine that went to
+ * sleep underneath one. A stage that genuinely fails to honour the signal overshoots by the
+ * length of its longest single call: a 5s DNS probe, a 20s HTTP timeout. Never a minute.
+ *
+ * Sixty seconds is comfortably above every legitimate overshoot and comfortably below the
+ * smallest one measured on a slept-through morning (139s, contacts on 2026-09-05).
+ */
+export const SUSPEND_OVERSHOOT_MS = 60_000;
+
+/**
+ * Did this stage run long because it was slow, or because the laptop was asleep?
+ *
+ * Worth telling apart, because they look identical in the log and lead opposite ways.
+ * Measured 2026-09-05: the 06:00 run took **four hours** and every stage failed with
+ * `fetch failed` and `getaddrinfo ENOTFOUND` — which reads exactly like a network fault and
+ * is not one. `pmset -g log` said the laptop was in clamshell sleep from 03:48, waking for
+ * two seconds every fifteen minutes for Power Nap. The pipeline ran in those slivers.
+ *
+ * The network errors were real; they were a *symptom*. Chasing them means rewriting timeout
+ * handling that already works.
+ */
+export const sleptThrough = (elapsedMs: number, budgetMs: number): boolean =>
+  elapsedMs > budgetMs + SUSPEND_OVERSHOOT_MS;
+
+/** A stage whose wall clock says the process was suspended rather than slow. */
+export type Overrun = { name: string; elapsed: number; budgetMs: number };
+
+/**
+ * One line explaining a slept-through run, or null when nothing overran that way.
+ *
+ * **One fault for the run, not one per stage.** Five stages reporting the same sleep is five
+ * ways of saying the laptop was shut, and the health check (026) would send five alerts about
+ * it. It names every stage affected so the scale is visible, and the worst one so there is a
+ * number to argue with.
+ *
+ * The last clause is the point of the whole thing. Without it this run looks like a network
+ * fault, and the fix for a network fault is somewhere the bug is not.
+ */
+export function suspendedFault(suspended: readonly Overrun[]): string | null {
+  if (suspended.length === 0) return null;
+
+  const worst = suspended.reduce((a, b) => (b.elapsed - b.budgetMs > a.elapsed - a.budgetMs ? b : a));
+  const mins = (ms: number): string => `${Math.round(ms / 60_000)}m`;
+
+  return (
+    `the laptop slept through this run — ${suspended.map((s) => s.name).join(', ')} overran, ` +
+    `worst ${worst.name} at ${mins(worst.elapsed)} against a ${mins(worst.budgetMs)} budget. ` +
+    `Any network errors above are a symptom of that, not the cause. ` +
+    `Check \`pmset -g log | grep "Entering Sleep"\``
+  );
+}
+
 export const STAGES: Record<string, Stage> = {
   ingest: { phase: 1, run: runIngest },
   prefilter: notYet(1, 'bge-small embeddings + cosine top ~30'),
@@ -191,6 +247,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
   console.log(`run ${runId} — ${values.db}${values.fast ? ' (fast)' : ''}${dryRun ? ' (dry run)' : ''}`);
 
+  /** Stages whose wall clock says the process was suspended, not slow. */
+  const suspended: Overrun[] = [];
+
   for (const name of toRun) {
     const stage = STAGES[name]!;
     const bucket: Record<string, number> = {};
@@ -244,7 +303,17 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     } finally {
       clearTimeout(timer);
     }
-    ctx.log(`done in ${Math.round(performance.now() - started)}ms`);
+
+    const elapsed = performance.now() - started;
+    ctx.log(`done in ${Math.round(elapsed)}ms`);
+    if (sleptThrough(elapsed, budgetMs)) suspended.push({ name, elapsed, budgetMs });
+  }
+
+  const slept = suspendedFault(suspended);
+  if (slept !== null) {
+    // Raised after the stages, so it reads as the explanation for whatever they logged.
+    errors.push({ stage: StageName.parse(suspended[0]!.name), message: slept, at: nowIso() });
+    console.error(`  [power] ${slept}`);
   }
 
   finishRun(db, runId, stats, errors);

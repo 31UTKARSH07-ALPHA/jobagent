@@ -19,6 +19,7 @@ const judgement = (over: Partial<ScoreResult> = {}): ScoreResult => ({
   location_fit: 8,
   stack_fit: 6,
   domain_fit: 4,
+  employer_fit: 5,
   reasoning: 'because',
   hook: 'p95 8ms',
   ...over,

@@ -90,6 +90,7 @@ export const bounceMentions = (email: Pick<Email, 'text' | 'html'>, recipient: s
 type Tracked = {
   id: number;
   job_id: number;
+  contact_id: number;
   thread_id: string | null;
   recipient: string;
   sent_at: string;
@@ -99,7 +100,7 @@ type Tracked = {
 export function trackable(ctx: StageContext): Tracked[] {
   return ctx.db
     .prepare(
-      `SELECT o.id, o.job_id, o.gmail_thread_id AS thread_id, k.email AS recipient, o.sent_at
+      `SELECT o.id, o.job_id, o.contact_id, o.gmail_thread_id AS thread_id, k.email AS recipient, o.sent_at
          FROM outreach o
          JOIN contacts k ON k.id = o.contact_id
         WHERE o.sent_at IS NOT NULL
@@ -115,7 +116,7 @@ export function trackable(ctx: StageContext): Tracked[] {
  * Drafts that left without the pipeline sending them.
  *
  * A draft is a real object in a real Gmail account, and he can send one himself — on
- * 2026-08-27 he did, to `careers@yourfriendlyhr.in`, from the Gmail interface. The pipeline
+ * A candidate can send directly from the Gmail interface. The pipeline
  * had never been armed and knew nothing about it, which quietly broke three things: the
  * tracker was not watching that thread for a reply or a bounce, the daily cap was not
  * counting it, and suppression would have let a second role at that company be written to.
@@ -151,20 +152,21 @@ async function reconcileHandSent(
       ctx.log(`could not check the draft for ${row.company}: ${err instanceof Error ? err.message : String(err)}`);
       continue;
     }
-    if (facts.status === 'draft') continue;
+    if (facts.status !== 'sent' || !facts.messageId) continue;
 
     // Gmail's own timestamp, not now. It matters: the message he sent by hand had been out
     // for five days, and recording it as this minute would have told the ledger it had been
     // waiting zero — which is the number decision 039's whole experiment turns on.
-    ctx.db
+    const recorded = ctx.db
       .prepare(
         `UPDATE outreach
-            SET sent_at = ?, tracked_at = ?,
+            SET sent_at = ?, tracked_at = ?, send_confirmed = 1,
                 gmail_message_id = COALESCE(?, gmail_message_id),
                 gmail_thread_id = COALESCE(?, gmail_thread_id)
-          WHERE id = ?`,
+          WHERE id = ? AND sent_at IS NULL AND (delete_requested_at IS NULL OR ? = 1)`,
       )
-      .run(facts.sentAt ?? nowIso(), nowIso(), facts.messageId, facts.threadId, row.id);
+      .run(facts.sentAt ?? nowIso(), nowIso(), facts.messageId, facts.threadId, row.id, Number(facts.status === 'sent' && facts.messageId !== null));
+    if (!recorded.changes) continue;
 
     // A terminal state cannot be walked forward, and that is the honest record: the mail
     // went, and he later said no to it. Reported rather than papered over.
@@ -273,6 +275,21 @@ export async function runTrack(ctx: StageContext, deps: TrackDeps = {}): Promise
         .prepare('UPDATE outreach SET bounced_at = ?, bounce_reason = ?, tracked_at = ? WHERE id = ?')
         .run(bounce.receivedAt, reason, now, row.id);
       tryTransition(ctx.db, row.job_id, 'SENT', 'BOUNCED');
+
+      // The address is wrong, and the contact row is per *company* — so this is the only
+      // moment anything can learn it. Left unrecorded, the cached contact hands the same dead
+      // address to the next matched job at that company forever (decision 047). Only
+      // `unknown-mailbox`: `blocked` says the mailbox exists and refused us, which is a fact
+      // about this sender rather than about the address.
+      if (reason === 'unknown-mailbox') {
+        const retired = ctx.db
+          .prepare('UPDATE contacts SET dead_at = ?, dead_reason = ? WHERE id = ? AND dead_at IS NULL')
+          .run(bounce.receivedAt, reason, row.contact_id);
+        if (retired.changes > 0) {
+          ctx.count('contact_retired');
+          ctx.log(`${row.recipient}: retired — the company is re-cascaded for a new address`);
+        }
+      }
 
       ctx.count(`bounced_${reason}`);
       // A `blocked` bounce is a different emergency from a wrong address: it says the

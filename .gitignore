@@ -17,3 +17,16 @@ data/*
 
 # launchd run logs
 logs/
+
+# startup briefs and demo ideas — personal notes, regenerated on demand (058)
+briefs/
+
+# Private local configuration and state
+.env.*
+!.env.example
+profile-corrections.json
+.claude/settings.local.json
+.vercel/
+*.db
+*.db-wal
+*.db-shm

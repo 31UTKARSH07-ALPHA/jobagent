@@ -76,6 +76,7 @@ export const SUPPRESSED_BY_SIBLING = `
      WHERE sj.company_id = j.company_id
        AND sib.job_id <> j.id
        AND sib.bounced_at IS NULL
+       AND (sib.delete_requested_at IS NULL OR sib.gmail_draft_id IS NOT NULL OR sib.sent_at IS NOT NULL)
   )`;
 
 /** The same rule, for callers that have a job in hand rather than a query. */
@@ -88,6 +89,7 @@ export function suppressedBySibling(db: Db, jobId: number): boolean {
         WHERE sj.company_id = j.company_id
           AND sib.job_id <> j.id
           AND sib.bounced_at IS NULL
+       AND (sib.delete_requested_at IS NULL OR sib.gmail_draft_id IS NOT NULL OR sib.sent_at IS NOT NULL)
         LIMIT 1`,
     )
     .get(jobId) as { yes: number } | undefined;
@@ -111,6 +113,25 @@ export function suppressedBySibling(db: Db, jobId: number): boolean {
 export const sendingArmed = (): boolean => process.env['JOBAGENT_SEND'] === 'armed';
 
 /**
+ * **Off. Every email waits for a tap.** Utkarsh's call, 2026-09-06 (decision 048).
+ *
+ * The auto-send band has been used exactly once, for `careers@example.com`, and it bounced —
+ * an address read off the employer's own careers page whose mailbox was unavailable (047). His answer
+ * is to approve every email himself for now and turn this back on once the queue has shown
+ * him what it produces.
+ *
+ * This is one constant, deliberately, and the same shape as `DRAFTABLE_CONFIDENCE` in
+ * decision 035: a policy that is one line away from being reversed, not a rewrite. It is
+ * **not** an environment variable — `JOBAGENT_SEND` is the master switch and there should be
+ * one of those, not two. This decides *who* may go without him; that one decides whether
+ * anything goes at all.
+ *
+ * Flipping it back to `true` needs nothing else: `queue.ts` re-runs {@link sendDecision} over
+ * jobs already gated, so the band starts applying to the existing queue on the next run.
+ */
+export const AUTO_SEND_ENABLED = false;
+
+/**
  * Auto-send, or wait for a tap?
  *
  * Decision 006 and invariant 3: only an address read off the posting or the company's own site
@@ -120,13 +141,27 @@ export const sendingArmed = (): boolean => process.env['JOBAGENT_SEND'] === 'arm
  * Both conditions matter and for different reasons. Confidence is about whether the *address*
  * is real; the score is about whether the *email* is worth sending. A perfect score to a
  * guessed address is still a guess.
+ *
+ * While {@link AUTO_SEND_ENABLED} is off, the answer is always `PENDING_APPROVAL` — but the
+ * conditions are still evaluated in the order above, so turning it on restores exactly the
+ * behaviour 006 described rather than something newly invented.
  */
 export function sendDecision(
   confidence: string,
   fitScore: number,
 ): Extract<JobState, 'AUTO_SEND' | 'PENDING_APPROVAL'> {
-  return confidence === 'high' && fitScore > AUTO_SEND_MIN_SCORE ? 'AUTO_SEND' : 'PENDING_APPROVAL';
+  return AUTO_SEND_ENABLED && qualifiesForAutoSend(confidence, fitScore) ? 'AUTO_SEND' : 'PENDING_APPROVAL';
 }
+
+/**
+ * Decision 006's rule on its own, separate from whether the band is currently open.
+ *
+ * Kept as its own function so the rule stays under test while {@link AUTO_SEND_ENABLED} is
+ * off. Folded into `sendDecision`, shutting the band would have meant deleting the only test
+ * of what it does — and the rule would come back untested on the day he turns it on.
+ */
+export const qualifiesForAutoSend = (confidence: string, fitScore: number): boolean =>
+  confidence === 'high' && fitScore > AUTO_SEND_MIN_SCORE;
 
 /** Above this, and only with a `high`-confidence address, an email may send itself. */
 export const AUTO_SEND_MIN_SCORE = 85;

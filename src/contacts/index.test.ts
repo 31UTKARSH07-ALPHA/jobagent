@@ -239,3 +239,82 @@ test('rerunning the stage is a no-op', async () => {
   assert.equal(second.counts['ready_to_draft'], undefined);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM contacts').get()!.n, 1);
 });
+
+test('a dead address does not count as having a contact', async () => {
+  const db = openDb(':memory:');
+  const { companyId } = seed(db, 'acme.com', ['Backend Intern']);
+  db.prepare(
+    `INSERT INTO contacts (company_id, email, name, title, source, confidence, mx_valid, dead_at,
+                           dead_reason, created_at)
+     VALUES (?, 'careers@acme.com', NULL, NULL, 'team_page', 'high', 1, ?, 'unknown-mailbox', ?)`,
+  ).run(companyId, nowIso(), nowIso());
+
+  const { ctx } = context(db);
+  let asked: readonly string[] | undefined;
+  await runContacts(ctx, {
+    findContacts: async (_company, opts) => {
+      asked = opts?.exclude;
+      return [candidate({ email: 'hr@acme.com' })];
+    },
+    mxValid: async () => true,
+  });
+
+  // Without this the cache returns the dead address forever and every future job at the
+  // company inherits the bounce (decision 047).
+  assert.deepEqual(asked, ['careers@acme.com']);
+
+  const live = db.prepare('SELECT email FROM contacts WHERE dead_at IS NULL').all() as { email: string }[];
+  assert.deepEqual(live.map((r) => r.email), ['hr@acme.com']);
+});
+
+test('a live contact is still cached, so a bounce elsewhere costs nothing', async () => {
+  const db = openDb(':memory:');
+  const { companyId } = seed(db, 'acme.com', ['Backend Intern']);
+  db.prepare(
+    `INSERT INTO contacts (company_id, email, name, title, source, confidence, mx_valid, created_at)
+     VALUES (?, 'careers@acme.com', NULL, NULL, 'team_page', 'high', 1, ?)`,
+  ).run(companyId, nowIso());
+
+  const { ctx, counts } = context(db);
+  let calls = 0;
+  await runContacts(ctx, {
+    findContacts: async () => {
+      calls++;
+      return [candidate()];
+    },
+    mxValid: async () => true,
+  });
+
+  assert.equal(calls, 0);
+  assert.equal(counts['cached'], 1);
+});
+
+test('the page an address came from is stored, not just logged', async () => {
+  const db = openDb(':memory:');
+  seed(db, 'acme.com', ['Backend Intern']);
+  const { ctx } = context(db);
+
+  await runContacts(ctx, {
+    findContacts: async () => [candidate({ found_at: 'https://acme.com/about' })],
+    mxValid: async () => true,
+  });
+
+  // When careers@example.com bounced there was no way left to ask what page had named it.
+  const row = db.prepare('SELECT found_at FROM contacts').get() as { found_at: string };
+  assert.equal(row.found_at, 'https://acme.com/about');
+});
+
+test('a gmail.com address found on a company page is stored medium, not high', async () => {
+  const db = openDb(':memory:');
+  seed(db, 'acme.com', ['Backend Intern']);
+  const { ctx } = context(db);
+
+  await runContacts(ctx, {
+    findContacts: async () => [candidate({ email: 'acmecareers@gmail.com' })],
+    mxValid: async () => true,
+  });
+
+  // Still drafted — it may be the only address a ten-person firm publishes. Never auto-sent.
+  const row = db.prepare('SELECT confidence FROM contacts').get() as { confidence: string };
+  assert.equal(row.confidence, 'medium');
+});

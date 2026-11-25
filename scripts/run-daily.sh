@@ -65,6 +65,33 @@ if ! mkdir "$LOCK" 2>/dev/null; then
 fi
 trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT INT TERM
 
+# ── Stay awake for the length of the run ─────────────────────────────────────
+#
+# `pmset -g custom` on this laptop says `sleep 1`: one minute idle and the system sleeps.
+# Power Nap then wakes it for about two seconds every fifteen minutes, and the pipeline runs
+# in those slivers. Measured 08-31 to 09-05 — every daily run: a pipeline that takes 3m24s
+# awake took one to nine hours, and every network call it attempted in between failed with
+# `fetch failed` or `getaddrinfo ENOTFOUND`. That reads exactly like a broken network and is
+# not one.
+#
+# caffeinate holds a power assertion for as long as this shell lives:
+#   -i  no idle sleep    the one that matters, given `sleep 1`
+#   -m  no disk sleep    `disksleep 10`
+#   -s  no system sleep  AC only; ignored on battery, harmless to ask for
+#
+# **It cannot save a closed lid on battery.** Clamshell sleep is unconditional there — no
+# assertion overrides it — and that is the state this laptop was in on all five mornings
+# measured. What this fixes is every run that *begins* on a waking machine: the hourly lane,
+# the ten-minute sender, and a 06:00 run on AC or with the lid open. The rest is a power
+# setting or a machine that is not a laptop, and `src/main.ts` now says so in the log rather
+# than leaving it to look like DNS.
+CAFFEINATE=$(command -v caffeinate || true)
+if [ -x "$CAFFEINATE" ]; then
+  # `-w $$` ties the assertion to this shell: it is released when the run ends, however it
+  # ends, with no trap to forget and no process left holding the machine awake.
+  "$CAFFEINATE" -i -m -s -w $$ &
+fi
+
 # ── Wait for the network ─────────────────────────────────────────────────────
 #
 # launchd runs a missed 06:00 job when the laptop *wakes*, and Wi-Fi associates a

@@ -28,8 +28,8 @@ import {
   jobIdsInState,
   tryTransition,
 } from '../store/state.ts';
-import { confidenceForSource, nowIso, type JobState } from '../store/schema.ts';
-import { bestContact, findContacts } from './cascade.ts';
+import { nowIso, type JobState } from '../store/schema.ts';
+import { bestContact, confidenceFor, findContacts } from './cascade.ts';
 import { discoverDomain } from './domain.ts';
 import { mxValid } from './verify.ts';
 
@@ -113,18 +113,33 @@ export function pendingByCompany(ctx: StageContext): Pending[] {
   return [...byCompany.values()];
 }
 
-/** The contact this company already has, if the cascade has run for it before. */
+/**
+ * The contact this company already has, if the cascade has run for it before.
+ *
+ * A dead address does not count as having one. That is the point of decision 047: the cache
+ * is what makes the cascade affordable, and before this it cached an address a send had
+ * already proven wrong, so every future job at that company inherited the bounce.
+ */
 function cachedContact(ctx: StageContext, companyId: number): { id: number; email: string } | null {
   return (
     (ctx.db
       .prepare(
         `SELECT id, email FROM contacts
-          WHERE company_id = ? AND (mx_valid IS NULL OR mx_valid = 1)
+          WHERE company_id = ? AND (mx_valid IS NULL OR mx_valid = 1) AND dead_at IS NULL
           ORDER BY CASE confidence WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id
           LIMIT 1`,
       )
       .get(companyId) as { id: number; email: string } | undefined) ?? null
   );
+}
+
+/** Addresses at this company a send has already proven wrong. Never offered again. */
+function deadContacts(ctx: StageContext, companyId: number): string[] {
+  return (
+    ctx.db.prepare('SELECT email FROM contacts WHERE company_id = ? AND dead_at IS NOT NULL').all(companyId) as {
+      email: string;
+    }[]
+  ).map((r) => r.email);
 }
 
 /**
@@ -236,6 +251,9 @@ export async function runContacts(ctx: StageContext, deps: ContactsDeps = {}): P
             signal,
             postings: company.jobs.map((j) => j.description).filter((d) => d !== ''),
             allowGithub: useGithub,
+            // The company's pages still publish whatever bounced. Re-finding it is not a
+            // second opinion (decision 047).
+            exclude: deadContacts(ctx, companyId),
           },
         );
 
@@ -249,7 +267,10 @@ export async function runContacts(ctx: StageContext, deps: ContactsDeps = {}): P
           continue;
         }
 
-        const confidence = confidenceForSource(best.source);
+        // The rung, capped by whose domain the address is actually on — a page can publish a
+        // gmail.com address and that is not the same evidence as the company's own mail
+        // server answering for it (decision 047).
+        const confidence = confidenceFor(best.email, best.source, domain);
 
         // `contacts.email` is globally unique. An address already on file belongs to
         // whichever company found it first and stays there — a recruiting agency handling
@@ -264,12 +285,13 @@ export async function runContacts(ctx: StageContext, deps: ContactsDeps = {}): P
         } else {
           ctx.db
             .prepare(
-              `INSERT INTO contacts (company_id, email, name, title, source, confidence, mx_valid, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+              `INSERT INTO contacts (company_id, email, name, title, source, confidence, mx_valid,
+                                     found_at, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             )
             // `mx_valid` is always 1: `bestContact` only returns an address whose domain
             // answered, so an address that failed the check is never stored at all.
-            .run(companyId, best.email, best.name, best.title, best.source, confidence, 1, nowIso());
+            .run(companyId, best.email, best.name, best.title, best.source, confidence, 1, best.found_at, nowIso());
           ctx.count(`found_${best.source}`);
           ctx.log(`${company.name}: ${best.email} (${best.source}, ${confidence}) from ${best.found_at}`);
         }

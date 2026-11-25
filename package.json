@@ -10,7 +10,8 @@
     "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/main.ts",
     "dry-run": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/main.ts --dry-run",
     "test": "node --disable-warning=ExperimentalWarning --test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "dashboard": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/dashboard/server.ts"
   },
   "dependencies": {
     "@googleapis/gmail": "^18.0.0",

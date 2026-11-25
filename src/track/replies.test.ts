@@ -33,7 +33,7 @@ const context = (db: Db) => {
 };
 
 const judgement = (): ScoreResult => ({
-  level_fit: 9, location_fit: 9, stack_fit: 8, domain_fit: 8,
+  level_fit: 9, location_fit: 9, stack_fit: 8, domain_fit: 8, employer_fit: 8,
   reasoning: 'why', hook: 'a hook',
 });
 
@@ -323,4 +323,47 @@ test('waiting is counted in working days, which is the recruiter\'s clock', () =
 test('a same-day send has waited no time at all', () => {
   const now = new Date('2026-09-02T18:00:00Z');
   assert.equal(workingDaysSince('2026-09-02T09:00:00Z', now), 0);
+});
+
+test('a wrong address retires the contact, so the company is re-cascaded', async () => {
+  const db = openDb(':memory:');
+  sent(db);
+  const { ctx, counts } = context(db);
+
+  const ndr = email({
+    fromAddress: 'mailer-daemon@googlemail.com',
+    subject: 'Delivery Status Notification (Failure)',
+    text: 'Your message to careers@acme.com was not delivered.\n550 5.1.1 does not exist',
+  });
+  await runTrack(ctx, { client: {} as never, search: searching([ndr]) as never });
+
+  // The contact row is per company, and this is the only moment anything can learn the
+  // address is wrong. Left unrecorded, the cache hands it to the next matched job at Acme
+  // forever (decision 047).
+  assert.equal(counts['contact_retired'], 1);
+  const row = db.prepare('SELECT dead_at, dead_reason FROM contacts').get() as {
+    dead_at: string | null;
+    dead_reason: string | null;
+  };
+  assert.equal(row.dead_reason, 'unknown-mailbox');
+  assert.equal(row.dead_at, ndr.receivedAt);
+});
+
+test('a policy refusal leaves the address alone', async () => {
+  const db = openDb(':memory:');
+  sent(db);
+  const { ctx, counts } = context(db);
+
+  const ndr = email({
+    fromAddress: 'postmaster@acme.com',
+    subject: 'Undeliverable',
+    text: 'careers@acme.com — 550 5.7.1 message rejected as spam',
+  });
+  await runTrack(ctx, { client: {} as never, search: searching([ndr]) as never });
+
+  // `blocked` says the mailbox exists and refused us. Retiring the address would be repairing
+  // the wrong thing — the fault about sending reputation is the honest response (037).
+  assert.equal(counts['contact_retired'], undefined);
+  const row = db.prepare('SELECT dead_at FROM contacts').get() as { dead_at: string | null };
+  assert.equal(row.dead_at, null);
 });

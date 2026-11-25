@@ -35,7 +35,8 @@ const context = (db: Db, dryRun = false) => {
 };
 
 const judgement = (): ScoreResult => ({
-  level_fit: 9, location_fit: 9, stack_fit: 8, domain_fit: 8, reasoning: 'why', hook: 'hook',
+  level_fit: 9, location_fit: 9, stack_fit: 8, domain_fit: 8, employer_fit: 8,
+  reasoning: 'why', hook: 'hook',
 });
 
 let seq = 0;
@@ -86,6 +87,7 @@ const stubs = (taps: Tap[] = []) => {
   return {
     asked,
     answers,
+    armed: true,
     ask: async (_c: unknown, text: string) => {
       asked.push(text);
       return { message_id: 100 + asked.length };
@@ -306,4 +308,16 @@ test('button payloads survive the round trip and reject junk', () => {
   assert.deepEqual(decodeCallback('r:7'), { action: 'reject', outreachId: 7 });
   assert.equal(decodeCallback('drop table'), null);
   assert.equal(decodeCallback('a:'), null);
+});
+
+
+test('a Telegram approval cannot queue while sending is disarmed', async () => {
+  const db = openDb(':memory:');
+  try {
+    const { outreachId } = pending(db);
+    const s = stubs([tap(outreachId, 'approve')]);
+    await runApprove(context(db).ctx, { config, ...s, armed: false });
+    assert.equal(db.prepare('SELECT approved_at FROM outreach WHERE id=?').get(outreachId)?.approved_at, null);
+    assert.match(s.answers[0] ?? '', /disarmed/i);
+  } finally { db.close(); }
 });

@@ -15,8 +15,11 @@
 import { parseArgs } from 'node:util';
 import type { StageContext } from '../stage.ts';
 import { getJob } from '../store/jobs.ts';
+import { tryTransition } from '../store/state.ts';
 import { CURRENT_FIT_SCORE, latestScore } from '../store/scores.ts';
-import { MATCH_THRESHOLD } from '../match/score.ts';
+import { MATCH_THRESHOLD, PROMPT_VERSION } from '../match/score.ts';
+import { isUnpaid } from '../ingest/filter.ts';
+import { internshipRecommendationExclusion } from '../ingest/compensation.ts';
 import { nowIso, type Job, type JobScore, type Profile } from '../store/schema.ts';
 import { loadProfile } from '../match/profile.ts';
 import { groqDrafter, type Drafter, type DraftResult } from './compose.ts';
@@ -86,10 +89,20 @@ export function draftableJobs(ctx: StageContext, limit?: number): Draftable[] {
               CASE WHEN k.source = 'posting' THEN k.name END AS contact_name
          FROM jobs j
          JOIN companies c ON c.id = j.company_id
-         JOIN contacts k ON k.company_id = j.company_id
+         -- The company's best *live* address, chosen the same way the contacts stage chooses
+         -- it. A plain join on company_id was fine while every company had exactly one
+         -- contact row; retiring a bounced address (decision 047) means a company can now
+         -- have two, and a bare-column GROUP BY would have picked between them arbitrarily —
+         -- including picking the dead one.
+         JOIN contacts k ON k.id = (
+              SELECT id FROM contacts
+               WHERE company_id = j.company_id
+                 AND mx_valid = 1
+                 AND dead_at IS NULL
+                 AND confidence IN (${DRAFTABLE_CONFIDENCE.map(() => '?').join(', ')})
+               ORDER BY CASE confidence WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id
+               LIMIT 1)
         WHERE j.state = 'DRAFTED'
-          AND k.mx_valid = 1
-          AND k.confidence IN (${DRAFTABLE_CONFIDENCE.map(() => '?').join(', ')})
           AND NOT EXISTS (SELECT 1 FROM outreach o WHERE o.job_id = j.id)
           -- The newest score has to still agree this is a match. MATCHED was set by whichever
           -- rubric was current at the time and there is no edge back out of it, so a rubric
@@ -102,12 +115,14 @@ export function draftableJobs(ctx: StageContext, limit?: number): Draftable[] {
           -- is skipped, not queued (decision 038). Ordering by score means the role that
           -- survives is the better one.
           AND NOT ${SUPPRESSED_BY_SIBLING}
-        GROUP BY j.id
         ORDER BY ${CURRENT_FIT_SCORE} DESC,
                  j.first_seen_at DESC
         LIMIT ?`,
     )
-    .all(...DRAFTABLE_CONFIDENCE, MATCH_THRESHOLD, cap) as {
+    // Over-fetch, because the unpaid filter below runs in JS and a row it drops must not cost
+    // the day a draft. `LIMIT cap` then filtering would silently write two emails on a
+    // three-a-day ramp. The bound stays finite so a large backlog is not all read into memory.
+    .all(...DRAFTABLE_CONFIDENCE, MATCH_THRESHOLD, cap + OVERFETCH_FOR_FILTERS) as {
     job_id: number;
     company_id: number;
     company: string;
@@ -116,24 +131,118 @@ export function draftableJobs(ctx: StageContext, limit?: number): Draftable[] {
     contact_name: string | null;
   }[];
 
-  return rows.flatMap((row) => {
-    const job = getJob(ctx.db, row.job_id);
-    const score = latestScore(ctx.db, row.job_id);
-    // A job with no score cannot be written about — the hook comes from the score, and it is
-    // the only part of an alert-sourced posting anything has ever read in full.
-    if (job === null || score === null) return [];
-    return [
-      {
-        job,
-        companyId: row.company_id,
-        company: row.company,
-        contactId: row.contact_id,
-        email: row.email,
-        contactName: row.contact_name,
-        score,
-      },
-    ];
-  });
+  return rows
+    .flatMap((row) => {
+      const job = getJob(ctx.db, row.job_id);
+      const score = latestScore(ctx.db, row.job_id);
+      // A job with no score cannot be written about — the hook comes from the score, and it is
+      // the only part of an alert-sourced posting anything has ever read in full.
+      if (job === null || score === null) return [];
+      return [
+        {
+          job,
+          companyId: row.company_id,
+          company: row.company,
+          contactId: row.contact_id,
+          email: row.email,
+          contactName: row.contact_name,
+          score,
+        },
+      ];
+    })
+    // A posting that says in its own title that it does not pay is not one to apply for, and
+    // the digest has held these back since decision 027 — but only the digest did. Two were
+    // sitting in `DRAFTED` at 84 with live addresses on 2026-09-08, one of them `high`
+    // confidence, and `draftableJobs` was returning it. **The stage that writes the email had
+    // the weaker guard**, which is exactly the shape decision 045 found in the score check.
+    // Filtered here rather than in SQL so `isUnpaid` stays the one definition: SQLite has no
+    // REGEXP and a LIKE list would be a second, drifting copy (the same reasoning as the
+    // digest's own filter).
+    .filter((item) => !internshipRecommendationExclusion(item.job))
+    // One company, one draft a day (decision 038) — applied **before** the cap, not after.
+    // `runDraft` has always skipped a company's second role, but it did so downstream of
+    // `LIMIT cap`, so two roles at one firm inside the top three cost the day a draft rather
+    // than being replaced. Measured 2026-09-08: a cap of 3 produced 2 drafts because 8byte
+    // held two of the slots. The same shape as the unpaid filter above — a JS rule downstream
+    // of a SQL limit quietly shrinks the batch — which is why both live here now.
+    //
+    // Rows arrive best-score-first, so the role that survives is the better one, exactly as
+    // 038 intended.
+    .filter((item, i, all) => all.findIndex((other) => other.companyId === item.companyId) === i)
+    .slice(0, cap);
+}
+
+/**
+ * Extra rows to read so a JS-side filter cannot shrink the day's batch.
+ *
+ * Only `isUnpaid` filters after the query, and it drops a vanishing fraction of postings — two
+ * in 156 — so a handful of spare rows covers it. It is not a correctness bound: if every spare
+ * row were also unpaid the run simply drafts fewer, which is the same outcome as the filter
+ * being in SQL.
+ */
+export const OVERFETCH_FOR_FILTERS = 5;
+
+/**
+ * Retire `DRAFTED` jobs the pipeline will never act on.
+ *
+ * `DRAFTED` had no edge out except the gate, so a job the draft stage permanently refuses sat
+ * in a live state for ever — counted in every backlog number, re-examined every morning, never
+ * written about. Six were in exactly that position after the v5 re-score (decision 045) left
+ * them at 47–65 against a threshold of 70, and two more are internships that say in their own
+ * title that they do not pay.
+ *
+ * Two reasons to expire, and the difference between them is the whole care in this function:
+ *
+ * - **Unpaid** — permanent. The title will not change, and no rubric bump can rescue it.
+ * - **Below the threshold under the *current* rubric.** The version check is load-bearing.
+ *   `EXPIRED` is terminal, and a rubric bump moves scores a long way: CoinDCX went from 47 to
+ *   84 between v4 and v5 (046). Expiring on a score the next re-score is about to replace
+ *   would discard a good posting on the strength of an obsolete opinion, which is decision 041
+ *   with the consequences pointing the other way. **A job whose newest score predates the
+ *   current `PROMPT_VERSION` is left alone** until the re-score reaches it.
+ *
+ * Never touches a job with an `outreach` row: something is written, and possibly sent, and
+ * that is the gate's business rather than this sweep's.
+ */
+export function expireUnactionable(ctx: StageContext): void {
+  const rows = ctx.db
+    .prepare(
+      `SELECT j.id, j.title, s.fit_score, s.prompt_version
+         FROM jobs j
+         LEFT JOIN job_scores s ON s.job_id = j.id
+                               AND s.prompt_version = (SELECT MAX(prompt_version)
+                                                         FROM job_scores WHERE job_id = j.id)
+        WHERE j.state = 'DRAFTED'
+          AND NOT EXISTS (SELECT 1 FROM outreach o WHERE o.job_id = j.id)`,
+    )
+    .all() as { id: number; title: string; fit_score: number | null; prompt_version: number | null }[];
+
+  for (const row of rows) {
+    const unpaid = isUnpaid(row.title);
+    const currentlyRejected =
+      row.prompt_version === PROMPT_VERSION && row.fit_score !== null && row.fit_score < MATCH_THRESHOLD;
+
+    if (!unpaid && !currentlyRejected) continue;
+
+    // `EXPIRED` is terminal, and the state machine has no path back on purpose. `dryRun` is
+    // documented as "everything except irreversible outside effects", and a DB write is
+    // normally inside that line — ingest and scoring both write on a dry run. A transition
+    // that cannot be undone without a hand-edit is the exception: this project has needed
+    // exactly three of those in its life and each one is recorded in `agenthandoff.md`.
+    if (ctx.dryRun) {
+      ctx.count('would_expire');
+      ctx.log(`would expire "${row.title}"`);
+      continue;
+    }
+
+    tryTransition(ctx.db, row.id, 'DRAFTED', 'EXPIRED');
+    ctx.count(unpaid ? 'expired_unpaid' : 'expired_below_threshold');
+    ctx.log(
+      unpaid
+        ? `expired "${row.title}" — the posting says it does not pay`
+        : `expired "${row.title}" — ${row.fit_score} under the current rubric, below ${MATCH_THRESHOLD}`,
+    );
+  }
 }
 
 export type DraftDeps = {
@@ -156,6 +265,11 @@ export async function runDraft(ctx: StageContext, deps: DraftDeps = {}): Promise
 
   const drafter = deps.drafter ?? groqDrafter;
   const write = deps.writeDraft ?? createGmailDraft;
+
+  // Before reading the queue, not after: a job this retires is one the queue would have
+  // skipped anyway, and clearing it first keeps the backlog number honest.
+  expireUnactionable(ctx);
+
   const jobs = draftableJobs(ctx);
 
   if (jobs.length === 0) {
@@ -164,9 +278,9 @@ export async function runDraft(ctx: StageContext, deps: DraftDeps = {}): Promise
   }
   ctx.log(`drafting ${jobs.length} with ${drafter.model}`);
 
-  // The SQL suppression only sees `outreach` rows that already exist, so two roles at one
-  // company both survive selection in a single batch and would both be drafted. Decision 038
-  // is one live conversation per company, and "within this run" is part of that.
+  // `draftableJobs` already keeps one role per company, so this should never fire. Kept as a
+  // backstop because it costs nothing and the consequence of it being wrong is two cold emails
+  // to the same company in one morning (decision 038).
   const writtenTo = new Set<number>();
 
   for (const item of jobs) {
@@ -193,6 +307,10 @@ export async function runDraft(ctx: StageContext, deps: DraftDeps = {}): Promise
       );
 
       if (ctx.dryRun) {
+        // Counted against the company here as well as on the real path, or the dry run
+        // reports both roles at a two-role company and a real run writes one. A preview that
+        // overstates by a sibling is the kind of number that gets believed.
+        writtenTo.add(item.companyId);
         ctx.count('would_draft');
         ctx.log(`would draft to ${item.email} — ${draft.subject}`);
         continue;
@@ -273,6 +391,8 @@ export async function redraft(
          JOIN companies c ON c.id = j.company_id
          JOIN contacts k ON k.id = o.contact_id
         WHERE o.sent_at IS NULL
+          AND o.delete_requested_at IS NULL AND o.edit_pending = 0 AND o.archived_at IS NULL
+          AND o.approved_at IS NULL
           AND o.gmail_draft_id IS NOT NULL
         ORDER BY o.id
         ${opts.limit === undefined ? '' : 'LIMIT ?'}`,

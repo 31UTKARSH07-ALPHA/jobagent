@@ -1,5 +1,5 @@
 /**
- * The 06:00 schedule: generates, installs and removes the launchd agent that runs
+ * The daily schedule: generates, installs and removes the launchd agent that runs
  * `scripts/run-daily.sh`.
  *
  *   node src/schedule/launchd.ts --print      # the plist, to stdout, touching nothing
@@ -36,7 +36,7 @@ export type LaunchdJob = {
    * Seconds between runs. When set, the job uses `StartInterval` and `hour`/`minute` are
    * only a label for `--status`.
    *
-   * The two schedule kinds answer different questions. A calendar entry means "at 06:00,
+   * The two schedule kinds answer different questions. A calendar entry means "at this hour,
    * and if the laptop was shut then the moment it wakes" — right for a thing that happens
    * once a day and must not be skipped. An interval means "roughly this often", which is
    * right for a poll where a missed slot costs an hour of freshness and nothing else.
@@ -49,17 +49,27 @@ export type LaunchdJob = {
 };
 
 /**
- * The daily pipeline: ingest → score → digest (the rest are no-ops until Phase 2).
- * 06:00 rather than later because scoring is paced by Groq's token budget and takes
- * ~35 minutes for 30 jobs — the digest lands when scoring finishes, not at a fixed
- * time (decision 017).
+ * The daily pipeline: ingest → score → contacts → draft → digest → send.
  *
- * Phase 3's 4-hourly tracker is a second job, added here as a second object.
+ * **18:00, not 06:00, and the reason is measured** (decision 054). Counting every run of the
+ * ten-minute sender over eleven days gives a direct record of when this laptop is actually
+ * awake, and **06:00 produced zero runs in eleven days** — every daily run since 08-31 has
+ * been a catch-up fired on wake, taking one to nine hours and usually delivering no digest at
+ * all (049). 18:00 is the most reliable hour in which he is also awake (74%), and it puts the
+ * digest in front of him with the evening left to review the drafts and tap.
+ *
+ * The two remaining agents are unaffected: the hourly lane is an interval, and the sender
+ * still works a 09:00-based queue (`SEND_WINDOW_HOUR`) because a recruiter is not reading mail
+ * at 18:05. `scheduleTimes` rolls to the *next* morning when the pipeline runs after the send
+ * hour, so an evening run queues for the following business day by itself.
+ *
+ * Was 06:00 on the theory that scoring is slow and the digest should land whenever it
+ * finishes. That reasoning was sound and irrelevant: the machine was asleep.
  */
 export const DAILY: LaunchdJob = {
   label: 'com.utkarsh.jobagent.daily',
   script: 'scripts/run-daily.sh',
-  hour: 6,
+  hour: 18,
   minute: 0,
 };
 

@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DAILY, HOURLY, ROOT, buildPlist, plistPath, resolveNode } from './launchd.ts';
@@ -23,7 +23,11 @@ test('the plist parses as a property list', () => {
 
   const parsed = JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', file], { encoding: 'utf8' }));
   assert.equal(parsed.Label, DAILY.label);
-  assert.deepEqual(parsed.StartCalendarInterval, { Hour: 6, Minute: 0 });
+  // 18:00 since decision 054: 06:00 produced zero runs in eleven days of measurement, because
+  // the laptop is always shut then. Asserted against DAILY rather than a literal so a
+  // deliberate change is one edit, not two.
+  assert.deepEqual(parsed.StartCalendarInterval, { Hour: DAILY.hour, Minute: DAILY.minute });
+  assert.equal(DAILY.hour, 18, 'a change here should be deliberate — see 054');
   assert.equal(parsed.RunAtLoad, false);
   assert.equal(parsed.WorkingDirectory, '/Users/x/jobagent');
 });
@@ -81,7 +85,7 @@ test('resolveNode prefers a stable symlink over the version-pinned real path', (
 });
 
 test('ROOT is the repo, and the wrapper it names exists', () => {
-  assert.equal(ROOT.endsWith('/jobagent'), true);
+  assert.equal(existsSync(join(ROOT, 'scripts', 'run-daily.sh')), true);
   assert.equal(plistPath('com.example.x').endsWith('/Library/LaunchAgents/com.example.x.plist'), true);
 });
 

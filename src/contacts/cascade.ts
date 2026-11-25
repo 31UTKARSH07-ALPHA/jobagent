@@ -16,6 +16,15 @@
  * Only the two `high` rungs can ever auto-send. A pattern guess is a guess however plausible
  * it looks, and it goes to the approval queue for a human to read first.
  *
+ * The rung is a **ceiling**, not the answer: an address published on a company's page but
+ * hosted at a mailbox provider is capped at `medium`, because "read off the company's own
+ * site" has to mean the company's own domain to be worth the auto-send band. See
+ * {@link confidenceFor} and decision 047.
+ *
+ * And none of it proves the mailbox exists — `careers@example.com` came off this cascade as
+ * `high`, auto-sent, and bounced. Nothing free can prove it; what the project does instead is
+ * remember the bounce, which is why `opts.exclude` exists.
+ *
  * Everything here needs a **verified** domain — see `./domain.ts` and decision 030. Handing
  * this a `.unknown.invalid` marker is a bug, not a slow path.
  */
@@ -23,7 +32,7 @@ import { getJson, getText, HttpError } from '../ingest/http.ts';
 import { decodeEntities, htmlToText } from '../ingest/html.ts';
 import { normaliseCompanyName } from '../ingest/resolve-company.ts';
 import { normaliseDomain } from '../store/companies.ts';
-import { confidenceForSource, type ContactSource } from '../store/schema.ts';
+import { confidenceForSource, type ContactConfidence, type ContactSource } from '../store/schema.ts';
 import { apexOf } from './domain.ts';
 import { domainOfEmail, hasMx } from './verify.ts';
 
@@ -192,6 +201,32 @@ export function isUsable(email: string, companyDomain: string, companyName: stri
 }
 
 /**
+ * What a found address is actually worth, which is its rung capped by *whose domain it is on*.
+ *
+ * `confidenceForSource` says what the rung permits. `high` is the band that may auto-send with
+ * nobody reading it first (invariant 3), and it is defined as an address **read off the
+ * company's own site** — which was being taken to mean the page it was printed on rather than
+ * the domain it lives at. Two addresses got in on that reading:
+ * `contact@example.net` and `hiring@example.net`, both stored `high` because a
+ * company page named them and both trivially MX-valid because gmail.com takes mail.
+ *
+ * A mailbox at a provider may well be the only address a ten-person firm publishes, and
+ * {@link isUsable} is right to keep it. But it is somebody's personal mailbox, and the
+ * evidence for it is a page saying so — that is `medium`: still drafted, never sent without a
+ * tap. Decision 047.
+ */
+export function confidenceFor(email: string, source: ContactSource, companyDomain: string): ContactConfidence {
+  const ceiling = confidenceForSource(source);
+  if (ceiling !== 'high') return ceiling;
+
+  const domain = domainOfEmail(email);
+  if (domain === null) return 'low';
+
+  const onOwnDomain = apexOf(domain) === apexOf(normaliseDomain(companyDomain));
+  return onOwnDomain ? 'high' : 'medium';
+}
+
+/**
  * Ordering within a company's findings. Rung first, then how likely the address is to be
  * read by somebody who hires.
  */
@@ -239,6 +274,13 @@ export type CascadeOptions = {
   postings?: readonly string[];
   /** GitHub is rate-limited to 60 requests an hour unauthenticated; the stage caps it. */
   allowGithub?: boolean;
+  /**
+   * Addresses a send has already proven wrong, which this company's pages will still be
+   * publishing. Without this, re-running the cascade after a bounce finds the dead address
+   * again, ranks it first for the same reasons it did the first time, and returns it
+   * (decision 047).
+   */
+  exclude?: readonly string[];
 };
 
 /** Read one page and keep whatever addresses are on it. Never throws. */
@@ -337,6 +379,10 @@ export async function findContacts(
   // awaits the network. Decision 029 hit exactly this in the scorer.
   const outOfTime = (): boolean => opts.signal?.aborted === true;
 
+  // Seeded with the dead so every rung is filtered by one test, the pattern guess included —
+  // `careers@acme.com` is exactly as guessable after it bounced as before.
+  for (const dead of opts.exclude ?? []) seen.add(dead.trim().toLowerCase());
+
   const add = (candidates: ContactCandidate[]): void => {
     for (const candidate of candidates) {
       if (seen.has(candidate.email)) continue;
@@ -348,9 +394,8 @@ export async function findContacts(
   const done = (): boolean =>
     found.some(
       (c) =>
-        confidenceForSource(c.source) === 'high' &&
-        HIRING_LOCAL.test(c.email.split('@')[0] ?? '') &&
-        apexOf(domainOfEmail(c.email) ?? '') === apexOf(company.domain),
+        confidenceFor(c.email, c.source, company.domain) === 'high' &&
+        HIRING_LOCAL.test(c.email.split('@')[0] ?? ''),
     );
 
   // 1. The posting itself. Free — this text is already in the database.

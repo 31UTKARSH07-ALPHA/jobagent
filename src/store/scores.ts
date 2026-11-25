@@ -54,8 +54,9 @@ export function insertScore(
   const { changes } = db
     .prepare(
       `INSERT INTO job_scores (job_id, prompt_version, fit_score, level_fit, location_fit,
-                               stack_fit, domain_fit, reasoning, hook, model, scored_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                               stack_fit, domain_fit, employer_fit, reasoning, hook, model,
+                               scored_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (job_id, prompt_version) DO NOTHING`,
     )
     .run(
@@ -66,6 +67,7 @@ export function insertScore(
       result.location_fit,
       result.stack_fit,
       result.domain_fit,
+      result.employer_fit,
       result.reasoning,
       result.hook,
       model,
@@ -75,14 +77,27 @@ export function insertScore(
 }
 
 /** The model's half of a stored row, so a resumed run can finish without re-asking. */
-export const factorsOf = (score: JobScore): ScoreResult => ({
-  level_fit: score.level_fit,
-  location_fit: score.location_fit,
-  stack_fit: score.stack_fit,
-  domain_fit: score.domain_fit,
-  reasoning: score.reasoning,
-  hook: score.hook,
-});
+/**
+ * A stored row back into the model-output shape, for the one path that reuses a score.
+ *
+ * **Null when the row predates `employer_fit`.** A v5 row cannot be turned into a v6 result
+ * and the caller must re-score instead of inventing the missing rating — which is why this
+ * returns null rather than defaulting the factor to 0 or 5. In practice the caller asks for a
+ * row at the current `PROMPT_VERSION`, so it never sees the null; the type is what stops a
+ * future caller from asking a looser question and getting a fabricated answer.
+ */
+export const factorsOf = (score: JobScore): ScoreResult | null =>
+  score.employer_fit === null
+    ? null
+    : {
+        level_fit: score.level_fit,
+        location_fit: score.location_fit,
+        stack_fit: score.stack_fit,
+        domain_fit: score.domain_fit,
+        employer_fit: score.employer_fit,
+        reasoning: score.reasoning,
+        hook: score.hook,
+      };
 
 export type ScoreDistribution = {
   promptVersion: number;

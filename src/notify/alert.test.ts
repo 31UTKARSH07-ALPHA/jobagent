@@ -40,6 +40,7 @@ const judgement = (): ScoreResult => ({
   location_fit: 9,
   stack_fit: 9,
   domain_fit: 9,
+  employer_fit: 9,
   reasoning: 'strong on every factor',
   hook: 'I built a typeahead engine at p95 8 ms.',
 });

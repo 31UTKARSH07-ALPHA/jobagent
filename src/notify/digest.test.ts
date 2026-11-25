@@ -24,6 +24,7 @@ const judgement = (over: Partial<ScoreResult> = {}): ScoreResult => ({
   location_fit: 10,
   stack_fit: 8,
   domain_fit: 7,
+  employer_fit: 7,
   reasoning: 'Overlaps on retrieval work.',
   hook: 'p95 8ms over 2M documents',
   ...over,

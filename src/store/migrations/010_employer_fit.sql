@@ -1,0 +1,36 @@
+-- The fifth factor: is this a real engineering employer, and is this posting theirs?
+--
+-- Rubric v6. Measured on 2026-09-08, across the 99 scores written under v5:
+--
+--     level 10 · location 10 · stack 10 · domain 10  ->  84   × 81 of 99
+--
+-- **The score had stopped ranking anything.** An internship title in Bengaluru always earns
+-- 10 for level and 10 for location, and the model reads "Full Stack Development Internship"
+-- as a perfect stack and domain match — because for this candidate it is. Four factors, all
+-- pinned at 10, is arithmetic with no inputs left. Decision 024 suspected it and 046 proved
+-- it: the pile-up survived the profile correction (58% under v4, 63% under v5), so better
+-- resume wording was never going to break it.
+--
+-- The employer is the evidence being thrown away — and the old prompt threw it away on
+-- purpose, with the line "not how prestigious the company is". That instruction is right
+-- about prestige and wrong about everything else it excluded. Tied at exactly 84 on 09-08:
+--
+--     Stripe                          Software Engineer, Intern
+--     Microsoft                       Research Sciences INTERN
+--     CoinDCX                         Intern - Engineering
+--     NexisGrow Jobs & Internships    Software Engineer Intern at Cargill
+--     Top Gen AI Jobs                 AI Product Engineer - Internship
+--     Full Stack Developer Intern Re  Full Stack Developer Intern React & AI - Premium Col…
+--     SkilloVilla                     Java Backend Developer Intern
+--     Ellucian                        ReStart Consultant (Software Engineering Returnship)
+--
+-- Three of those are not employers at all — an aggregator reposting Cargill's role, a job
+-- board, and a "company" whose name is itself a job title. One is a returnship for people
+-- re-entering work after years out, which v5's `level_fit` read as a student internship.
+--
+-- Nullable, because every row written under v2–v5 predates the factor and there is nothing
+-- honest to backfill it with. `CURRENT_FIT_SCORE` takes the newest row per job (041), so old
+-- and new coexist with no inconsistency — the same property that makes a partial re-score a
+-- safe place to stop (046).
+ALTER TABLE job_scores ADD COLUMN employer_fit INTEGER
+  CHECK (employer_fit IS NULL OR employer_fit BETWEEN 0 AND 10);

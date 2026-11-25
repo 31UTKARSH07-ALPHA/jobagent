@@ -15,7 +15,7 @@
 import type { gmail_v1 } from '@googleapis/gmail';
 import type { StageContext } from '../stage.ts';
 import { nowIso } from '../store/schema.ts';
-import { transition, tryTransition } from '../store/state.ts';
+import { tryTransition } from '../store/state.ts';
 import { CURRENT_FIT_SCORE } from '../store/scores.ts';
 import { deliver, type Delivered } from './deliver.ts';
 import { remainingToday, sendDecision, sendingArmed } from './gate.ts';
@@ -23,10 +23,21 @@ import { remainingToday, sendDecision, sendingArmed } from './gate.ts';
 /**
  * When the day's sending starts, local time.
  *
- * Not the pipeline's own run time, which is 06:00. Mail that arrives at 06:05 was obviously
- * not written by a person at 06:05, and a recruiter reading it at 09:30 is the point.
+ * Deliberately not the pipeline's own run time (18:00 since decision 054). Mail that arrives
+ * at 18:05 was not written by a person at 18:05, and end of day is the worst moment to reach a
+ * recruiter — skimmed, or buried under tomorrow morning's flood.
+ *
+ * **In practice this reads as "as early in the business day as the laptop allows", and that is
+ * why it works.** Measured over eleven days, the machine is asleep for the whole of 08:00,
+ * 09:00 and most of 10:00, so nothing has ever actually left at this hour: the only real batch
+ * was scheduled for 09:00 and went at **12:37**, when the laptop woke. 10:00–14:00 is where
+ * sends land, and it is a better window than the one nominally configured.
+ *
+ * 10 rather than 9 for the day that changes. Both are equally unreachable now, but if the sleep
+ * problem is ever fixed (049) a 09:00 arrival lands *in* the overnight pile while 10:00 lands
+ * after the recipient has cleared it. Nothing here depends on that; it is the cheaper default.
  */
-export const SEND_WINDOW_HOUR = 9;
+export const SEND_WINDOW_HOUR = 10;
 
 /** Minimum and maximum gap between two sends. Five emails in one second is the tell. */
 export const MIN_GAP_MS = 3 * 60_000;
@@ -92,11 +103,12 @@ function due(ctx: StageContext, now: Date): Due[] {
         WHERE o.sent_at IS NULL
           AND o.gmail_draft_id IS NOT NULL
           AND o.scheduled_send_at IS NOT NULL
+          AND o.edit_pending = 0 AND o.archived_at IS NULL AND o.delete_requested_at IS NULL
           AND o.scheduled_send_at <= ?
           -- Auto-sends, and approved items -- one code path for both, which is the point of
           -- decision 007. PENDING_APPROVAL without approved_at is deliberately excluded:
           -- a scheduled slot is not permission.
-          AND (j.state = 'AUTO_SEND' OR (j.state = 'PENDING_APPROVAL' AND o.approved_at IS NOT NULL))
+          AND j.state = 'PENDING_APPROVAL' AND o.approved_at IS NOT NULL
         ORDER BY o.scheduled_send_at`,
     )
     .all(now.toISOString()) as Due[];
@@ -120,7 +132,7 @@ export async function runSend(ctx: StageContext, deps: SendDeps = {}): Promise<v
   const waiting = ungated(ctx);
   for (const row of waiting) {
     const next = sendDecision(row.confidence, row.fit_score ?? 0);
-    transition(ctx.db, row.job_id, 'DRAFTED', next);
+    if (!tryTransition(ctx.db, row.job_id, 'DRAFTED', next)) continue;
     ctx.count(next === 'AUTO_SEND' ? 'auto' : 'needs_approval');
     ctx.log(`${row.company} → ${row.email}: ${next === 'AUTO_SEND' ? 'cleared to send' : 'waiting for approval'} (${row.fit_score}, ${row.confidence})`);
   }
@@ -156,6 +168,7 @@ export async function runSend(ctx: StageContext, deps: SendDeps = {}): Promise<v
       `SELECT o.id FROM outreach o JOIN jobs j ON j.id = o.job_id
         WHERE o.scheduled_send_at IS NULL AND o.sent_at IS NULL
           AND j.state IN ('AUTO_SEND', 'PENDING_APPROVAL')
+          AND o.edit_pending = 0 AND o.archived_at IS NULL AND o.delete_requested_at IS NULL
         ORDER BY o.id`,
     )
     .all() as { id: number }[];
@@ -204,11 +217,11 @@ export async function runSend(ctx: StageContext, deps: SendDeps = {}): Promise<v
 
       ctx.db
         .prepare(
-          `UPDATE outreach SET sent_at = ?, gmail_message_id = COALESCE(?, gmail_message_id),
+          `UPDATE outreach SET sent_at = ?, send_confirmed = ?, gmail_message_id = COALESCE(?, gmail_message_id),
                                gmail_thread_id = COALESCE(?, gmail_thread_id)
             WHERE id = ? AND sent_at IS NULL`,
         )
-        .run(nowIso(), sent.messageId, sent.threadId, row.outreach_id);
+        .run(nowIso(), Number(!sent.recovered || sent.messageId !== null), sent.messageId, sent.threadId, row.outreach_id);
 
       tryTransition(ctx.db, row.job_id, row.state as 'AUTO_SEND' | 'PENDING_APPROVAL', 'SENT');
 

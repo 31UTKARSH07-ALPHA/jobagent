@@ -22,6 +22,7 @@ test('strict mode needs required + additionalProperties:false — Zod already em
   };
   assert.deepEqual(json.required.sort(), [
     'domain_fit',
+    'employer_fit',
     'hook',
     'level_fit',
     'location_fit',
@@ -75,6 +76,7 @@ test('a schema mismatch is caught rather than passed through', () => {
     location_fit: 8,
     stack_fit: 6,
     domain_fit: 4,
+    employer_fit: 7,
     reasoning: 'x',
     hook: 'y',
   };

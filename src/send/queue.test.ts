@@ -13,7 +13,7 @@ import { RawJob, nowIso, type ScoreResult } from '../store/schema.ts';
 import { stateOf, transition } from '../store/state.ts';
 import type { StageContext } from '../stage.ts';
 import { runSend, scheduleTimes, SEND_WINDOW_HOUR, MIN_GAP_MS, MAX_GAP_MS } from './queue.ts';
-import { sendDecision, AUTO_SEND_MIN_SCORE } from './gate.ts';
+import { sendDecision, qualifiesForAutoSend, AUTO_SEND_ENABLED, AUTO_SEND_MIN_SCORE } from './gate.ts';
 
 const context = (db: Db, dryRun = false) => {
   const counts: Record<string, number> = {};
@@ -33,7 +33,8 @@ const context = (db: Db, dryRun = false) => {
 };
 
 const judgement = (): ScoreResult => ({
-  level_fit: 9, location_fit: 9, stack_fit: 9, domain_fit: 9, reasoning: 'why', hook: 'hook',
+  level_fit: 9, location_fit: 9, stack_fit: 9, domain_fit: 9, employer_fit: 9,
+  reasoning: 'why', hook: 'hook',
 });
 
 let seq = 0;
@@ -78,6 +79,16 @@ function drafted(
   return id;
 }
 
+/**
+ * He taps approve. The only route to a send while `AUTO_SEND_ENABLED` is off (decision 048),
+ * and the route almost every test below now takes — what they are each about is the delivery
+ * machinery, not which gate the job came through.
+ */
+const approve = (db: Db, jobId?: number): void => {
+  const where = jobId === undefined ? '' : ' WHERE job_id = ?';
+  db.prepare(`UPDATE outreach SET approved_at = ?${where}`).run(...[nowIso(), jobId].filter((v) => v !== undefined));
+};
+
 const delivering = () => {
   const calls: string[] = [];
   return {
@@ -117,7 +128,8 @@ test('disarmed still gates, schedules and says what it would do', async () => {
 
   await runSend(ctx, { now: morning });
 
-  assert.equal(stateOf(db, job), 'AUTO_SEND');
+  // Even a perfect score to a published address waits for a tap now (048).
+  assert.equal(stateOf(db, job), 'PENDING_APPROVAL');
   assert.equal(counts['scheduled'], 1);
   const row = db.prepare('SELECT scheduled_send_at, sent_at FROM outreach').get() as {
     scheduled_send_at: string; sent_at: string | null;
@@ -126,13 +138,22 @@ test('disarmed still gates, schedules and says what it would do', async () => {
   assert.equal(row.sent_at, null);
 });
 
-test('only a published address above the band may send itself', () => {
+test('nothing sends itself while the band is shut', () => {
+  // Utkarsh's call, 2026-09-06 (decision 048). The one auto-send this project ever made
+  // bounced, so every email waits for a tap until he says otherwise.
+  assert.equal(AUTO_SEND_ENABLED, false);
+  assert.equal(sendDecision('high', 100), 'PENDING_APPROVAL');
+  assert.equal(sendDecision('high', AUTO_SEND_MIN_SCORE + 1), 'PENDING_APPROVAL');
+});
+
+test('the auto-send rule still says what it will mean when he turns it back on', () => {
   // Invariant 3 and decision 006. Both halves matter: confidence is about whether the
-  // address is real, the score about whether the email is worth sending.
-  assert.equal(sendDecision('high', AUTO_SEND_MIN_SCORE + 1), 'AUTO_SEND');
-  assert.equal(sendDecision('high', AUTO_SEND_MIN_SCORE), 'PENDING_APPROVAL', 'the band is exclusive');
-  assert.equal(sendDecision('low', 100), 'PENDING_APPROVAL', 'a perfect score to a guess is still a guess');
-  assert.equal(sendDecision('medium', 100), 'PENDING_APPROVAL');
+  // address is real, the score about whether the email is worth sending. Tested apart from
+  // the switch so the rule does not come back untested on the day the switch flips.
+  assert.equal(qualifiesForAutoSend('high', AUTO_SEND_MIN_SCORE + 1), true);
+  assert.equal(qualifiesForAutoSend('high', AUTO_SEND_MIN_SCORE), false, 'the band is exclusive');
+  assert.equal(qualifiesForAutoSend('low', 100), false, 'a perfect score to a guess is still a guess');
+  assert.equal(qualifiesForAutoSend('medium', 100), false);
 });
 
 test('an approval-queue item is never delivered without a tap', async () => {
@@ -156,6 +177,7 @@ test('an armed send delivers, records the ids and moves the job', async () => {
   const post = delivering();
 
   await runSend(context(db).ctx, { deliver: post.deliver, now: morning, armed: true });
+  approve(db);
   db.prepare('UPDATE outreach SET scheduled_send_at = ?').run(new Date(later.getTime() - 60_000).toISOString());
   const second = context(db);
   await runSend(second.ctx, { deliver: post.deliver, now: later, armed: true });
@@ -176,6 +198,7 @@ test('a sent message is never sent again', async () => {
   const armed = { deliver: post.deliver, armed: true };
 
   await runSend(context(db).ctx, { ...armed, now: morning });
+  approve(db);
   db.prepare('UPDATE outreach SET scheduled_send_at = ?').run(new Date(later.getTime() - 60_000).toISOString());
   await runSend(context(db).ctx, { ...armed, now: later });
   await runSend(context(db).ctx, { ...armed, now: later });
@@ -200,22 +223,16 @@ test('an obsolete score from an old rubric cannot clear the gate', async () => {
   assert.equal(stateOf(db, job), 'PENDING_APPROVAL', 'the current rubric decides, not the kindest one');
 });
 
-test('a job that no longer qualifies is demoted, not sent', async () => {
-  // Human review may always be added; it may never be removed automatically. A rubric bump
-  // or a bug in the gate must not be able to leave a job cleared to send itself.
+test('a job left in the auto-send lane is demoted, never sent', async () => {
+  // Human review may always be added; it may never be removed automatically. Two ways to
+  // arrive here and both matter: the rubric moved on and the posting no longer clears the
+  // band, or — since 048 — the band is shut and nothing clears it at all. A job gated while
+  // it was open must not keep its clearance.
   const db = openDb(':memory:');
   const job = drafted(db, { fit: 100, confidence: 'high' });
   const post = delivering();
 
-  await runSend(context(db).ctx, { now: morning, armed: true, deliver: post.deliver });
-  assert.equal(stateOf(db, job), 'AUTO_SEND');
-
-  // The rubric moves on and this posting is no longer above the band.
-  db.prepare(
-    `INSERT INTO job_scores (job_id, prompt_version, fit_score, level_fit, location_fit,
-                             stack_fit, domain_fit, reasoning, hook, model, scored_at)
-     VALUES (?, 5, 84, 8, 8, 8, 8, 'tighter rubric', 'hook', 'test', ?)`,
-  ).run(job, nowIso());
+  transition(db, job, 'DRAFTED', 'AUTO_SEND');
   db.prepare('UPDATE outreach SET scheduled_send_at = ?').run(new Date(later.getTime() - 60_000).toISOString());
 
   const { ctx, counts, faults } = context(db);
@@ -268,6 +285,7 @@ test('the daily cap holds the rest back rather than dropping them', async () => 
   const armed = { deliver: post.deliver, armed: true };
 
   await runSend(context(db).ctx, { ...armed, now: morning });
+  approve(db);
   db.prepare('UPDATE outreach SET scheduled_send_at = ?').run(new Date(later.getTime() - 60_000).toISOString());
   const { ctx, counts } = context(db);
   await runSend(ctx, { ...armed, now: later });
@@ -289,6 +307,7 @@ test('a lost response is recovered rather than resent', async () => {
   const { ctx, faults, counts } = context(db);
 
   await runSend(context(db).ctx, { now: morning, armed: true, deliver: async () => ({ messageId: null, threadId: null, recovered: true }) });
+  approve(db);
   db.prepare('UPDATE outreach SET scheduled_send_at = ?').run(new Date(later.getTime() - 60_000).toISOString());
   await runSend(ctx, {
     now: later,
@@ -306,6 +325,7 @@ test('a failed send leaves the row untouched so the next run retries', async () 
   const job = drafted(db, { fit: 100, confidence: 'high' });
 
   await runSend(context(db).ctx, { now: morning, armed: true });
+  approve(db);
   db.prepare('UPDATE outreach SET scheduled_send_at = ?').run(new Date(later.getTime() - 60_000).toISOString());
   const { ctx, faults } = context(db);
   await runSend(ctx, {
@@ -317,7 +337,8 @@ test('a failed send leaves the row untouched so the next run retries', async () 
   });
 
   assert.equal(faults.length, 1);
-  assert.equal(stateOf(db, job), 'AUTO_SEND');
+  // Still approved and still waiting on its slot, so the next run tries again.
+  assert.equal(stateOf(db, job), 'PENDING_APPROVAL');
   assert.equal((db.prepare('SELECT sent_at FROM outreach').get() as { sent_at: null }).sent_at, null);
 });
 
